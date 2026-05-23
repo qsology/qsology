@@ -16,6 +16,11 @@ type clientIPCtxKey struct{}
 // Consumers read from this, not the X-Forwarded-Proto
 type schemeCtxKey struct{}
 
+// peerTrustedCtxKey is the context key carrying if the request
+// has come via a trusted proxy. RequestID and other middleware
+// uses this to decide if the x-forwarded-* headers are to be trusted
+type peerTrustedCtxKey struct{}
+
 // ClientIP returns the resolved client IP, or a Zero Addr if none
 // was set
 func ClientIP(ctx context.Context) netip.Addr {
@@ -30,6 +35,14 @@ func RequestScheme(ctx context.Context) string {
 	return v
 }
 
+// PeerTrusted reports whether the requestor  was a configured
+// trusted proxy. Returns false if TrustedProxy did not run or no
+// trusted_proxies are configured.
+func PeerTrusted(ctx context.Context) bool {
+	v, _ := ctx.Value(peerTrustedCtxKey{}).(bool)
+	return v
+}
+
 // TrustedProxy resolves the IP using the right-to-left X-Forwarded-For
 // parsing, bounded by trustedProxies
 //
@@ -41,10 +54,13 @@ func TrustedProxy(trustedProxies []string) func(http.Handler) http.Handler {
 	prefixes, addrs := parseTrustedProxies(trustedProxies)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			peer := parseRemoteAddr(r.RemoteAddr)
+			peerOk := peer.IsValid() && isTrusted(peer, prefixes, addrs)
 			ip := resolveClientIP(r, prefixes, addrs)
 			scheme := resolveRequestScheme(r, prefixes, addrs)
 			ctx := context.WithValue(r.Context(), clientIPCtxKey{}, ip)
 			ctx = context.WithValue(ctx, schemeCtxKey{}, scheme)
+			ctx = context.WithValue(ctx, peerTrustedCtxKey{}, peerOk)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

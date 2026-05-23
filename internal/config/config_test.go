@@ -202,6 +202,9 @@ func TestDefaults_RequestLogging(t *testing.T) {
 	if !slices.Equal(r.DebugPaths, []string{"/static/**"}) {
 		t.Errorf("default debug_paths = %v, want [/static/**]", r.DebugPaths)
 	}
+	if r.FallbackHost != "qsology" {
+		t.Errorf("default fallback_host = %q, want qsology", r.FallbackHost)
+	}
 }
 
 func TestLoad_RequestLogging_TOMLOverlay(t *testing.T) {
@@ -308,6 +311,38 @@ func TestValidate_RequestLoggingDebugPathsMustBeValidGlobs(t *testing.T) {
 		if err := validate(cfg); err != nil {
 			t.Errorf("glob %q should validate, got %v", g, err)
 		}
+	}
+}
+
+func TestValidate_RequestLoggingFallbackHostMustBeSet(t *testing.T) {
+	cfg := Defaults()
+	cfg.Logging.Requests.FallbackHost = ""
+	if err := validate(cfg); err == nil {
+		t.Error("empty fallback_host should fail when enabled")
+	}
+	cfg.Logging.Requests.FallbackHost = "   "
+	if err := validate(cfg); err == nil {
+		t.Error("whitespace-only fallback_host should fail when enabled")
+	}
+	// Disabling the middleware skips the check.
+	cfg = Defaults()
+	cfg.Logging.Requests.Enabled = false
+	cfg.Logging.Requests.FallbackHost = ""
+	if err := validate(cfg); err != nil {
+		t.Errorf("fallback_host should be unchecked when disabled, got %v", err)
+	}
+}
+
+func TestLoad_RequestLogging_FallbackHostEnvOverride(t *testing.T) {
+	cfg, err := LoadWith("",
+		fakeLookup(map[string]string{"QSOLOGY_LOGGING_REQUESTS_FALLBACK_HOST": "staging.qsology"}),
+		fakeReadFile(nil),
+	)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Logging.Requests.FallbackHost != "staging.qsology" {
+		t.Errorf("fallback_host = %q, want staging.qsology", cfg.Logging.Requests.FallbackHost)
 	}
 }
 

@@ -42,7 +42,7 @@ func RequestLogger(logger *slog.Logger, opts RequestLoggerOptions) func(http.Han
 				status = http.StatusOK
 			}
 
-			logger.LogAttrs(r.Context(), opts.levelFor(status, r.URL.Path), "http_request",
+			attrs := []slog.Attr{
 				slog.Group("http",
 					slog.String("method", r.Method),
 					slog.String("path", r.URL.Path),
@@ -53,7 +53,11 @@ func RequestLogger(logger *slog.Logger, opts RequestLoggerOptions) func(http.Han
 				),
 				slog.String("client_ip", ClientIP(r.Context()).String()),
 				slog.String("request_id", chimw.GetReqID(r.Context())),
-			)
+			}
+			if upstream := UpstreamRequestID(r.Context()); upstream != "" {
+				attrs = append(attrs, slog.String("upstream_request_id", upstream))
+			}
+			logger.LogAttrs(r.Context(), opts.levelFor(status, r.URL.Path), "http_request", attrs...)
 		})
 	}
 }

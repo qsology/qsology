@@ -252,6 +252,35 @@ func TestRequestLogger_HonorsCustomLevelMapping(t *testing.T) {
 	}
 }
 
+func TestRequestLogger_IncludesUpstreamRequestIDWhenPresent(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf, slog.LevelDebug)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	// Prime the upstream value directly (RequestID middleware normally sets it).
+	ctx := context.WithValue(req.Context(), upstreamRequestIDCtxKey{}, "trace-upstream-1")
+	req = req.WithContext(ctx)
+	runRequest(t, logger, defaultOpts(nil), func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, req)
+	m := decodeOne(t, &buf)
+	if m["upstream_request_id"] != "trace-upstream-1" {
+		t.Errorf("upstream_request_id = %v, want trace-upstream-1", m["upstream_request_id"])
+	}
+}
+
+func TestRequestLogger_OmitsUpstreamRequestIDWhenAbsent(t *testing.T) {
+	var buf bytes.Buffer
+	logger := newTestLogger(&buf, slog.LevelDebug)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	runRequest(t, logger, defaultOpts(nil), func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, req)
+	m := decodeOne(t, &buf)
+	if _, ok := m["upstream_request_id"]; ok {
+		t.Errorf("upstream_request_id should be omitted when not set, got %v", m["upstream_request_id"])
+	}
+}
+
 func TestRequestLogger_AccumulatesBytesAcrossWrites(t *testing.T) {
 	var buf bytes.Buffer
 	logger := newTestLogger(&buf, slog.LevelDebug)

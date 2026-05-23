@@ -10,7 +10,6 @@ import (
 	"github.com/qsology/qsology/internal/web/views"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"github.com/qsology/qsology/internal/config"
 	"github.com/qsology/qsology/internal/logging"
 )
@@ -52,8 +51,9 @@ func (s *Server) BuildRouter() http.Handler {
 	// Middleware
 	//// Trusted Proxies
 	r.Use(mw.TrustedProxy(s.cfg.HTTP.TrustedProxies))
-	//// RequestID injection
-	r.Use(middleware.RequestID)
+	//// RequestID injection (format "<host>-<uuid>", using inbound
+	//// X-Request-Id only when the immediate peer is a trusted proxy).
+	r.Use(mw.RequestID(s.cfg.Logging.Requests.FallbackHost))
 	//// Per-request logging (configurable; toggle + per-status levels +
 	//// debug-path demotion all come from config.Logging.Requests).
 	if s.cfg.Logging.Requests.Enabled {
