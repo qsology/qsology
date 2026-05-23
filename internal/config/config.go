@@ -41,6 +41,9 @@ type RequestLoggingConfig struct {
 	LevelClientError string   `toml:"level_client_error"`
 	LevelServerError string   `toml:"level_server_error"`
 	DebugPaths       []string `toml:"debug_paths"`
+	// FallbackHost is the host prefix for request-id
+	// ("<host>-<uuid>") when the inbound Host header is empty.
+	FallbackHost string `toml:"fallback_host"`
 }
 
 // HTTPConfig struct for HTTP Server configuration
@@ -64,6 +67,7 @@ func Defaults() Config {
 				LevelClientError: "warn",
 				LevelServerError: "error",
 				DebugPaths:       []string{"/static/**"},
+				FallbackHost:     "qsology",
 			},
 		},
 		HTTP: HTTPConfig{
@@ -161,6 +165,9 @@ func applyEnv(cfg *Config, lookup Lookup) error {
 	if v, ok := lookup("QSOLOGY_LOGGING_REQUESTS_DEBUG_PATHS"); ok {
 		cfg.Logging.Requests.DebugPaths = splitList(v)
 	}
+	if v, ok := lookup("QSOLOGY_LOGGING_REQUESTS_FALLBACK_HOST"); ok {
+		cfg.Logging.Requests.FallbackHost = v
+	}
 	// HTTP
 	if v, ok := lookup("QSOLOGY_HTTP_ADDRESS"); ok {
 		cfg.HTTP.Address = v
@@ -245,6 +252,9 @@ func validate(cfg Config) error {
 			if !doublestar.ValidatePattern(p) {
 				return fmt.Errorf("logging.requests.debug_paths entry %q is not a valid glob", p)
 			}
+		}
+		if strings.TrimSpace(cfg.Logging.Requests.FallbackHost) == "" {
+			return errors.New("logging.requests.fallback_host must be set (used as <host> in generated request ids when the Host header is empty)")
 		}
 	}
 
