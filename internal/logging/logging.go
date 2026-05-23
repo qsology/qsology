@@ -15,7 +15,7 @@ func New(cfg config.LoggingConfig) (*slog.Logger, error) { return NewWith(cfg, o
 
 // NewWith is used by New and when testing
 func NewWith(cfg config.LoggingConfig, out io.Writer) (*slog.Logger, error) {
-	level, err := parseLevel(cfg.Level)
+	level, err := ParseLevel(cfg.Level)
 	if err != nil {
 		return nil, err
 	}
@@ -40,8 +40,9 @@ func NewWith(cfg config.LoggingConfig, out io.Writer) (*slog.Logger, error) {
 	return slog.New(handler), nil
 }
 
-// parseLevel takes a standard level string and converts to the format slog expects
-func parseLevel(s string) (slog.Level, error) {
+// ParseLevel takes a standard level string and converts to the format slog
+// expects. Accepts debug|info|warn|warning|error (case insensitive).
+func ParseLevel(s string) (slog.Level, error) {
 	switch strings.ToLower(s) {
 	case "debug":
 		return slog.LevelDebug, nil

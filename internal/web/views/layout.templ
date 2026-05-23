@@ -1,0 +1,60 @@
+package views
+
+import (
+	"github.com/qsology/qsology/internal/web/assets"
+	mw "github.com/qsology/qsology/internal/web/middleware"
+)
+
+var (
+	picoHref   = "/static/vendor/pico-2.0.6.min.css"
+	picoSRI    = assets.MustSRI("vendor/pico-2.0.6.min.css")
+	appCSSHref = "/static/app.css"
+	appCSSSRI  = assets.MustSRI("app.css")
+	htmxSrc    = "/static/vendor/htmx-2.0.9.min.js"
+	htmxSRI    = assets.MustSRI("vendor/htmx-2.0.9.min.js")
+	appJSSrc   = "/static/app.js"
+	appJSSRI   = assets.MustSRI("app.js")
+)
+
+templ Layout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<title>{ title }</title>
+			<link
+				rel="stylesheet"
+				href={ picoHref }
+				integrity={ picoSRI }
+				crossorigin="anonymous"
+				nonce={ mw.Nonce(ctx) }
+			/>
+			<link
+				rel="stylesheet"
+				href={ appCSSHref }
+				integrity={ appCSSSRI }
+				crossorigin="anonymous"
+				nonce={ mw.Nonce(ctx) }
+			/>
+		</head>
+		<body>
+			<main class="qsy-narrow container">
+				{ children... }
+			</main>
+			<script
+				src={ htmxSrc }
+				integrity={ htmxSRI }
+				crossorigin="anonymous"
+				nonce={ mw.Nonce(ctx) }
+			></script>
+			<script
+				src={ appJSSrc }
+				integrity={ appJSSRI }
+				crossorigin="anonymous"
+				nonce={ mw.Nonce(ctx) }
+				defer
+			></script>
+		</body>
+	</html>
+}

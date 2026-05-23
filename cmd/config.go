@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/qsology/qsology/internal/config"
+	"github.com/qsology/qsology/internal/logging"
 	"github.com/urfave/cli/v3"
 )
 
@@ -16,7 +17,12 @@ func bootstrap(cmd *cli.Command) (config.Config, *slog.Logger, error) {
 		return config.Config{}, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return cfg, nil, nil
+	logger, err := logging.New(cfg.Logging)
+	if err != nil {
+		return config.Config{}, nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
+	return cfg, logger, nil
 }
 
 // Command to validate configuration
