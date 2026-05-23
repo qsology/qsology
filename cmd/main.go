@@ -30,6 +30,7 @@ func rootCommand() *cli.Command {
 		},
 		Commands: []*cli.Command{
 			validateConfigCommand(),
+			serveCommand(),
 		},
 	}
 }

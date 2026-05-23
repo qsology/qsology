@@ -1,0 +1,18 @@
+package views
+
+templ NotFound() {
+	@Layout("Not found") {
+		<h1>Not found</h1>
+		<p>That page does not exist.</p>
+		<p><a href="/">Back home</a></p>
+	}
+}
+
+templ InternalError() {
+	@Layout("Something went wrong") {
+		<h1>Something went wrong</h1>
+		<p>An unexpected error occurred.</p>
+		<p>Wait a moment and try again. If the problem persists, contact support.</p>
+		<p><a href="/">Back home</a></p>
+	}
+}

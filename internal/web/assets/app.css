@@ -1,0 +1,22 @@
+/* application styles */
+
+:root {
+    --qsy-form-max-width: 28rem;
+}
+
+main.qsy-narrow {
+    max-width: var(--qsy-form-max-width);
+    margin-inline: auto;
+}
+
+.qsy-flash {
+    margin-block-end: 1rem;
+}
+
+.qsy-flash[data-kind="error"] {
+    color: var(--pico-color-red-550, #c0392b);
+}
+
+.qsy-flash[data-kind="success"] {
+    color: var(--pico-color-green-550, #2c8a4a);
+}
