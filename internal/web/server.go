@@ -4,14 +4,14 @@ import (
 	"log/slog"
 	"net/http"
 
-	mw "github.com/qsology/qsology/internal/web/middleware"
-
 	"github.com/qsology/qsology/internal/web/assets"
-	"github.com/qsology/qsology/internal/web/views"
+	mw "github.com/qsology/qsology/internal/web/middleware"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/qsology/qsology/internal/config"
 	"github.com/qsology/qsology/internal/logging"
+	"github.com/qsology/qsology/internal/web/handlers"
+	"github.com/qsology/qsology/internal/web/views"
 )
 
 // Dependencies are service the web server needs but doesn't
@@ -71,8 +71,14 @@ func (s *Server) BuildRouter() http.Handler {
 	r.Use(mw.SecurityHeaders(hstsEnabled))
 
 	// Embedded static assets
-	r.Handle("/static/*", assets.Handler())
+	r.Mount("/static", assets.Handler())
 
+	// Route handlers: one Handlers instance carries shared deps
+	// (logger, config, etc.) for every route.
+	h := handlers.New(s.deps.Logger, s.cfg)
+
+	// Health check
+	r.Get("/healthz", h.Healthz)
 	// 404
 	r.NotFound(s.handleNotFound)
 
