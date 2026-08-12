@@ -1,0 +1,48 @@
+[project]
+name = "qsology"
+version = "2026.01"
+description = "Ham Radio logger"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "django>=6.1,<7",
+    "psycopg[binary]>=3.3",
+    "environs[django]>=15",
+    "whitenoise>=6.12.0",
+    "celery[redis]>=5.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-django>=4.14.0",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 80
+src = ["apps", "config", "tasks", "tests"]
+
+[tool.ruff.lint]
+# E/W - pycodestyle
+# F pyflakes
+# I isort
+# UP pyupgrade
+# B bugbear
+# DJ django
+# C4 comprehensions
+# SIM simplify
+# RUF ruff specifics
+select = [ "E", "W", "F", "I", "UP", "B", "DJ", "C4", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Migrations are auto generated, so we're going to ignore them
+"**/migrations/*.py" = ["E501", "RUF012"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "*_test.py", "tests.py"]
+addopts = "--strict-markers --reuse-db"
+testpaths = ["apps", "tests"]

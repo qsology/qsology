@@ -1,0 +1,70 @@
+# Taskfile
+# Install go-task and use 'task'
+
+version: "3"
+vars:
+  DEV_SETTINGS: "config.settings.development"
+  TEST_SETTINGS: "config.settings.test"
+
+tasks:
+  default:
+    desc: "List all tasks"
+    cmds:
+      - "task --list"
+    silent: true
+
+  test:
+    desc: "Run the pytest test suite. Can be limited to specific apps and tests. task test -- apps/accounts -k testname"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    cmds:
+      - "uv run pytest {{.CLI_ARGS}}"
+  test:coverage:
+    desc: "Run tests with coverage report"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    cmds:
+      - "uv run pytest --cov=apps --cov-report=term-missing --cov-report=html {{.CLI_ARGS}}"
+  lint:
+    desc: "Lint project with Ruff"
+    cmds:
+      - "uv run ruff check {{.CLI_ARGS | default \".\"}}"
+  lint:fix:
+    desc: "Lint project with Ruff, and auto fix"
+    cmds:
+      - "uv run ruff check --fix {{.CLI_ARGS | default \".\"}}"
+  format:
+    desc: "format the code using ruff"
+    cmds:
+      - "uv run ruff format {{.CLI_ARGS | default \".\"}}"
+  format:check:
+    desc: "check format of code using ruff"
+    cmds:
+      - "uv run ruff format --check {{.CLI_ARGS | default \".\"}}"
+  migrate:check:
+    desc: "Check Migrations are uptodate"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    cmds:
+      - "uv run python manage.py makemigrations --check --dry-run"
+  migrate:make:
+    desc: "Make migrations"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    cmds:
+      - "uv run python manage.py makemigrations {{.CLI-ARGS}}"
+  migrate:
+    desc: "Run DB migrations"
+    cmds:
+      - "uv run python manage.py migrate {{.CLI-ARGS}}"
+  django:check:
+    desc: "Run Django system checks"
+    cmds:
+      - "uv run python manage.py check"
+  check:
+    desc: "Run development / testing checks"
+    cmds:
+      - task: lint
+      - task: format:check
+      - task: migrate:check
+      - task: test

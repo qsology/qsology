@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.Python
+## Her?
+.egg-info/
+.venv/
+venv/
+
+# Django
+*.log
+*.sqlite3
+/staticfiles/
+/media
+local_settings.py
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.pyright/
+.ruff_cache/
+
+# Others
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+.iml
