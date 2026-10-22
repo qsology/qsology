@@ -26,6 +26,7 @@ coverage.xml
 htmlcov/
 .pyright/
 .ruff_cache/
+.hypothesis/
 
 # Others
 .DS_Store
@@ -34,3 +35,5 @@ htmlcov/
 .idea/
 .vscode/
 .iml
+# Exports stored locally when there is no S3 bucket
+private/

@@ -1,5 +1,15 @@
+import os
+
 import pytest
 from django.contrib.auth import get_user_model
+from hypothesis import settings
+
+# Property based tests run a quick set of examples by default, set
+# HYPOTHESIS_PROFILE=thorough (task test:thorough) for a much longer run
+settings.register_profile(
+    "thorough", max_examples=1000, stateful_step_count=200
+)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "default"))
 
 
 @pytest.fixture

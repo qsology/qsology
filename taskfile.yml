@@ -19,6 +19,13 @@ tasks:
       DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
     cmds:
       - "uv run pytest {{.CLI_ARGS}}"
+  test:thorough:
+    desc: "Run the tests with many more property based test examples, slow"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+      HYPOTHESIS_PROFILE: "thorough"
+    cmds:
+      - "uv run pytest {{.CLI_ARGS}}"
   test:coverage:
     desc: "Run tests with coverage report"
     env:
