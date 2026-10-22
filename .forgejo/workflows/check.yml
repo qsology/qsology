@@ -1,0 +1,43 @@
+# Every pull request into main must pass `task check` before it's merged.
+# Keep in step with .github/workflows/check.yml
+name: Check
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Fail rather than quietly re-lock if uv.lock is out of date
+  UV_LOCKED: "1"
+  UV_PYTHON_DOWNLOADS: automatic
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  check:
+    name: task check
+    # The label of a runner that runs jobs in containers, change to suit
+    runs-on: docker
+    container:
+      # Node is needed for the checkout action
+      image: node:24-bookworm
+    timeout-minutes: 30
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv and task
+        run: scripts/ci/install-tools.sh
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: task check
+        run: task check
