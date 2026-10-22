@@ -107,7 +107,14 @@ DJANGO_APPS = [
 
 THIRD_PARTY_APPS = []
 
-LOCAL_APPS = ["apps.accounts", "apps.callsigns"]
+LOCAL_APPS = [
+    "apps.accounts",
+    "apps.callsigns",
+    "apps.locations",
+    "apps.qrz",
+    "apps.logbook",
+    "apps.notifications",
+]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 # Email is taken from the URL in the environment (smtp://u:p@host:port/?tls=true"
@@ -154,4 +161,114 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.accounts.tasks.delete_scheduled_users",
         "schedule": timedelta(hours=24),
     },
+    "refresh-references": {
+        "task": "apps.locations.tasks.refresh_references",
+        "schedule": timedelta(days=7),
+    },
+    "tidy-exports": {
+        "task": "apps.logbook.tasks.tidy_exports",
+        "schedule": timedelta(minutes=15),
+    },
 }
+
+# Outbound HTTP, external services ask that we identify ourselves
+HTTP_USER_AGENT = env.str(
+    "QSOLOGY_HTTP_USER_AGENT",
+    default="qsology/2026.01 (+https://github.com/qsology/qsology)",
+)
+
+# Reference lists, refreshed weekly
+REFERENCE_SOURCES = {
+    "dxcc": env.str(
+        "QSOLOGY_DXCC_URL", default="https://lotw.arrl.org/lotw/config.tq6"
+    ),
+    "pota": env.str(
+        "QSOLOGY_POTA_URL", default="https://pota.app/all_parks_ext.csv"
+    ),
+    "sota": env.str(
+        "QSOLOGY_SOTA_URL",
+        default="https://storage.sota.org.uk/summitslist.csv",
+    ),
+    "iota": env.str(
+        "QSOLOGY_IOTA_URL",
+        default=(
+            "https://www.iota-world.org/islands-on-the-air/downloads/"
+            "download-file.html?path=fulllist.json"
+        ),
+    ),
+}
+
+# Address lookups use Nominatim (OpenStreetMap), free but limited to one
+# request a second on the public server. Point this at a self hosted
+# Nominatim to lift that
+GEOCODER_URL = env.str(
+    "QSOLOGY_GEOCODER_URL",
+    default="https://nominatim.openstreetmap.org/search",
+)
+GEOCODER_MIN_INTERVAL = env.float("QSOLOGY_GEOCODER_MIN_INTERVAL", default=1.0)
+
+# QRZ.com XML lookups, credentials are per user
+QRZ_XML_URL = env.str(
+    "QSOLOGY_QRZ_XML_URL", default="https://xmldata.qrz.com/xml/current/"
+)
+QRZ_AGENT = env.str("QSOLOGY_QRZ_AGENT", default="qsology-2026.01")
+
+# Log exports are built by celery and kept for a while to download. They're
+# never public, a download goes through the app, which checks who's asking
+# and hands out a link that only works for a few minutes
+EXPORT_RETENTION = timedelta(days=env.int("QSOLOGY_EXPORT_RETENTION_DAYS", 7))
+EXPORT_DOWNLOAD_URL_TTL = env.int("QSOLOGY_EXPORT_DOWNLOAD_URL_TTL", 300)
+# An export that hasn't started or finished by now is queued again
+EXPORT_STALE_AFTER = timedelta(
+    minutes=env.int("QSOLOGY_EXPORT_STALE_MINUTES", 60)
+)
+EXPORTS_S3_BUCKET = env.str("QSOLOGY_EXPORTS_S3_BUCKET", default="")
+if EXPORTS_S3_BUCKET:
+    # Any S3 compatible store: AWS, MinIO, Garage, R2...
+    STORAGES["exports"] = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": EXPORTS_S3_BUCKET,
+            "endpoint_url": env.str(
+                "QSOLOGY_EXPORTS_S3_ENDPOINT_URL", default=None
+            ),
+            "region_name": env.str("QSOLOGY_EXPORTS_S3_REGION", default=None),
+            "access_key": env.str(
+                "QSOLOGY_EXPORTS_S3_ACCESS_KEY", default=None
+            ),
+            "secret_key": env.str(
+                "QSOLOGY_EXPORTS_S3_SECRET_KEY", default=None
+            ),
+            "addressing_style": env.str(
+                "QSOLOGY_EXPORTS_S3_ADDRESSING_STYLE", default=None
+            ),
+            "location": env.str("QSOLOGY_EXPORTS_S3_PREFIX", default="exports"),
+            "signature_version": "s3v4",
+            # Private, only reachable through signed links that expire
+            "default_acl": "private",
+            "querystring_auth": True,
+            "querystring_expire": EXPORT_DOWNLOAD_URL_TTL,
+            "custom_domain": None,
+            "file_overwrite": False,
+        },
+    }
+else:
+    # Kept outside MEDIA_ROOT so it's never served as a static file
+    STORAGES["exports"] = {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {
+            "location": env.path(
+                "QSOLOGY_EXPORTS_ROOT",
+                default=str(BASE_DIR / "private/exports"),
+            ),
+        },
+    }
+
+# Notifications, sent through each of the channels a user prefers. Users
+# can't choose yet, so everyone gets the defaults
+NOTIFICATION_CHANNELS = {
+    "log": "apps.notifications.channels.LogChannel",
+}
+NOTIFICATION_DEFAULT_CHANNELS = env.list(
+    "QSOLOGY_NOTIFICATION_CHANNELS", default=["log"]
+)
