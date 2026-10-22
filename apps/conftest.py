@@ -24,3 +24,10 @@ def user(make_user):
     return make_user(
         username="m0wme", display_name="m0wme", email="m0wme@qsology.test"
     )
+
+
+@pytest.fixture
+def other_user(make_user):
+    return make_user(
+        username="k4gbi", display_name="k4gbi", email="k4gbi@qsology.test"
+    )

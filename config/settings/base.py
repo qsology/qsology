@@ -107,7 +107,7 @@ DJANGO_APPS = [
 
 THIRD_PARTY_APPS = []
 
-LOCAL_APPS = ["apps.accounts"]
+LOCAL_APPS = ["apps.accounts", "apps.callsigns"]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 # Email is taken from the URL in the environment (smtp://u:p@host:port/?tls=true"
