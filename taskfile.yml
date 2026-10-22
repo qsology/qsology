@@ -59,13 +59,17 @@ tasks:
     env:
       DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
     cmds:
-      - "uv run python manage.py makemigrations {{.CLI-ARGS}}"
+      - "uv run python manage.py makemigrations {{.CLI_ARGS}}"
   migrate:
     desc: "Run DB migrations"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.DEV_SETTINGS}}"
     cmds:
-      - "uv run python manage.py migrate {{.CLI-ARGS}}"
+      - "uv run python manage.py migrate {{.CLI_ARGS}}"
   django:check:
     desc: "Run Django system checks"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.DEV_SETTINGS}}"
     cmds:
       - "uv run python manage.py check"
   check:
