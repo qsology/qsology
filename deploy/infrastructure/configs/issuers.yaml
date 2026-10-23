@@ -1,0 +1,58 @@
+# Certificates come from two places: Let's Encrypt for what users see
+# through the gateway, and a private CA for everything inside the cluster
+# (OpenBao, the backup plugin, ...)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: qsology-letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: "${ACME_EMAIL}"
+    privateKeySecretRef:
+      name: letsencrypt-account
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - group: gateway.networking.k8s.io
+                kind: Gateway
+                name: public
+                namespace: qsology-gateway
+                sectionName: http
+---
+# The private CA, signed by itself once and then used to sign everything
+# internal. Its key is in cert-manager's namespace only
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: qsology-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-ca
+  namespace: ${CERT_MANAGER_NAMESPACE}
+spec:
+  isCA: true
+  commonName: qsology internal CA
+  secretName: internal-ca
+  duration: 87600h # 10 years
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 384
+    rotationPolicy: Never
+  issuerRef:
+    kind: ClusterIssuer
+    name: qsology-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: qsology-internal
+spec:
+  ca:
+    secretName: internal-ca

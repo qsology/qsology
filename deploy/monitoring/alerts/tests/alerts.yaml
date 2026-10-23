@@ -1,0 +1,203 @@
+# promtool unit tests for the alert rules, run by task deploy:check. The
+# rule files are each PrometheusRule's spec, named after it
+rule_files:
+  - qsology-app.yaml
+  - qsology-data.yaml
+  - qsology-platform.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # All web pods gone: down. One of two left: only degraded
+  - interval: 1m
+    input_series:
+      - series: 'up{namespace="qsology", pod="qsology-web-a"}'
+        values: "1x5 0x20"
+      - series: 'up{namespace="qsology", pod="qsology-web-b"}'
+        values: "1x10 0x15"
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: QsologyWebDown
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: QsologyWebDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: No qsology web pod is answering
+              description: >-
+                None of the web pods can be scraped, so the site is most likely
+                down. Check `kubectl -n qsology get pods` and the pods' logs.
+
+  # 10% of requests failing at 2 a second
+  - interval: 1m
+    input_series:
+      - series: 'django_http_requests_total{namespace="qsology", method="GET", route="logbook/", status="200"}'
+        values: "0+108x20"
+      - series: 'django_http_requests_total{namespace="qsology", method="GET", route="logbook/", status="500"}'
+        values: "0+12x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: QsologyHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "10% of requests are failing"
+              description: >-
+                More than 5% of requests to the app have returned a 5xx for 5
+                minutes. The traces in Tempo show where, the logs in Loki why.
+
+  # A trickle of errors with almost no traffic isn't worth waking anyone
+  - interval: 1m
+    input_series:
+      - series: 'django_http_requests_total{namespace="qsology", method="GET", route="logbook/", status="500"}'
+        values: "0+1x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: QsologyHighErrorRate
+        exp_alerts: []
+
+  # No celery metrics at all still means no workers
+  - interval: 1m
+    input_series:
+      - series: 'celery_queue_length{namespace="qsology", queue_name="celery"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: CeleryNoWorkers
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: No celery workers are up
+              description: >-
+                celery-exporter hasn't seen a worker heartbeat for 5 minutes.
+                Exports and imports aren't being processed.
+
+  # Last backup at 1h; by 40h it's 39 hours old
+  - interval: 1m
+    input_series:
+      - series: 'barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="qsology", pod="qsology-db-1"}'
+        values: "3600x2400"
+      - series: 'barman_cloud_cloudnative_pg_io_last_failed_backup_timestamp{namespace="qsology", pod="qsology-db-1"}'
+        values: "0x2400"
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: PostgresBackupTooOld
+        exp_alerts: []
+      - eval_time: 40h
+        alertname: PostgresBackupTooOld
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "The last PostgreSQL backup is 1d 15h 0m 0s old"
+              description: >-
+                The nightly backup hasn't completed in over 30 hours. See
+                `kubectl -n qsology get backups`.
+      - eval_time: 40h
+        alertname: PostgresBackupFailed
+        exp_alerts: []
+
+  # Valkey: the primary goes and nothing is promoted
+  - interval: 1m
+    input_series:
+      - series: 'redis_instance_info{namespace="qsology", pod="valkey-0", role="master"}'
+        values: "1x3 stale"
+      - series: 'redis_instance_info{namespace="qsology", pod="valkey-1", role="slave"}'
+        values: "1x13"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ValkeyNoPrimary
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: ValkeyNoPrimary
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: Valkey has no primary
+              description: >-
+                No node says it's the primary, so celery and the cache can't
+                write. Check the Sentinels' logs.
+
+  # A sealed OpenBao node
+  - interval: 1m
+    input_series:
+      - series: 'vault_core_unsealed{namespace="qsology-openbao", pod="openbao-1", cluster="vault-cluster"}'
+        values: "1x2 0x5"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: OpenBaoSealed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: qsology-openbao
+              pod: openbao-1
+              cluster: vault-cluster
+            exp_annotations:
+              summary: OpenBao in openbao-1 is sealed
+              description: >-
+                A sealed node serves nothing. Unseal it with 3 of the keys. While
+                all are sealed, RustFS can't get its encryption keys and no
+                secret can be synced.
+
+  # A certificate 10 days from expiry (cert-manager's own namespace label is
+  # exported_namespace), and one that hasn't been issued yet (0)
+  - interval: 1m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{namespace="qsology-cert-manager", exported_namespace="qsology-gateway", name="qsology-tls"}'
+        values: "864000x180"
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{namespace="qsology-cert-manager", exported_namespace="qsology-gateway", name="s3-tls"}'
+        values: "0x180"
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              exported_namespace: qsology-gateway
+              name: qsology-tls
+            exp_annotations:
+              summary: "qsology-gateway/qsology-tls expires in 9d 22h 0m 0s"
+              description: >-
+                It should have renewed by now. See
+                `kubectl -n qsology-gateway describe certificate qsology-tls`.
+      - eval_time: 2h
+        alertname: CertificateExpiringVerySoon
+        exp_alerts: []
+
+  # A volume at 4% free
+  - interval: 1m
+    input_series:
+      - series: 'kubelet_volume_stats_available_bytes{namespace="qsology", persistentvolumeclaim="pgdata-qsology-db-1"}'
+        values: "4x10"
+      - series: 'kubelet_volume_stats_capacity_bytes{namespace="qsology", persistentvolumeclaim="pgdata-qsology-db-1"}'
+        values: "100x10"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: VolumeAlmostFull
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: qsology
+              persistentvolumeclaim: pgdata-qsology-db-1
+            exp_annotations:
+              summary: "qsology/pgdata-qsology-db-1 has 4% free"
+              description: >-
+                PostgreSQL, Valkey, RustFS and OpenBao all stop taking writes when
+                their volume is full. Expand the PVC.
+
+  # The watchdog always fires
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: none
+            exp_annotations:
+              summary: Alerting is working

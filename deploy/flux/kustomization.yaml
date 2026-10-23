@@ -1,0 +1,7 @@
+# What a cluster's repo applies from this one (see clusters/example): where
+# the charts come from, and the layers that deploy everything else in order
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - sources.yaml
+  - layers.yaml

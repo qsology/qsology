@@ -1,0 +1,275 @@
+# What the app keeps its data in: PostgreSQL (CloudNativePG), Valkey and
+# RustFS
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: qsology-data
+  namespace: qsology
+spec:
+  groups:
+    - name: postgres
+      rules:
+        - alert: PostgresDown
+          expr: |
+            (count(cnpg_collector_up{namespace="qsology"} == 1) or vector(0)) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: No PostgreSQL instance is up
+            description: >-
+              Neither qsology-db instance reports PostgreSQL running. See
+              `kubectl cnpg -n qsology status qsology-db`.
+
+        - alert: PostgresInstanceDown
+          expr: |
+            cnpg_collector_up{namespace="qsology"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL isn't running in {{ $labels.pod }}
+
+        - alert: PostgresNotHighlyAvailable
+          expr: |
+            max(cnpg_pg_replication_streaming_replicas{namespace="qsology"}
+              - cnpg_pg_replication_is_wal_receiver_up{namespace="qsology"}) < 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL has no streaming replica
+            description: >-
+              The primary has no replica, so a failure of its node means
+              downtime and possibly lost writes, and failover can't happen.
+
+        - alert: PostgresReplicaNotReplicating
+          expr: |
+            cnpg_pg_replication_in_recovery{namespace="qsology"}
+              > cnpg_pg_replication_is_wal_receiver_up{namespace="qsology"}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Replica {{ $labels.pod }} isn't receiving WAL
+
+        - alert: PostgresReplicationLag
+          expr: |
+            max by (pod) (cnpg_pg_replication_lag{namespace="qsology"}) > 30
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} is {{ $value | humanizeDuration }} behind"
+
+        - alert: PostgresWALArchivingFailing
+          expr: |
+            (cnpg_pg_stat_archiver_last_failed_time{namespace="qsology"}
+              - cnpg_pg_stat_archiver_last_archived_time{namespace="qsology"}) > 1
+            and on (namespace, pod) cnpg_pg_replication_in_recovery{namespace="qsology"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: PostgreSQL can't archive WAL to RustFS
+            description: >-
+              Point in time recovery stops at the last archived WAL, and
+              unarchived WAL piles up on the primary's disk until it's full.
+              Check RustFS, and the plugin-barman-cloud sidecar's logs.
+
+        - alert: PostgresBackupTooOld
+          expr: |
+            time() - max(barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="qsology"} > 0)
+              > 30 * 3600
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "The last PostgreSQL backup is {{ $value | humanizeDuration }} old"
+            description: >-
+              The nightly backup hasn't completed in over 30 hours. See
+              `kubectl -n qsology get backups`.
+
+        - alert: PostgresNoBackup
+          expr: |
+            max(barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="qsology"}) == 0
+          for: 30h
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL has never been backed up
+            description: >-
+              No backup has shown up in the qsology-backups ObjectStore for 30
+              hours.
+
+        - alert: PostgresBackupFailed
+          expr: |
+            max(barman_cloud_cloudnative_pg_io_last_failed_backup_timestamp{namespace="qsology"})
+              > max(barman_cloud_cloudnative_pg_io_last_available_backup_timestamp{namespace="qsology"})
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: The last PostgreSQL backup failed
+
+        - alert: PostgresConnectionsHigh
+          expr: |
+            sum by (pod) (cnpg_backends_total{namespace="qsology"})
+              / max by (pod) (cnpg_pg_settings_setting{namespace="qsology", name="max_connections"}) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} is using {{ $value | humanizePercentage }} of its connections"
+
+        - alert: PostgresLongRunningTransaction
+          expr: |
+            max by (pod, datname, application_name) (cnpg_backends_max_tx_duration_seconds{namespace="qsology"}) > 600
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A transaction has been open for {{ $value | humanizeDuration }}"
+            description: >-
+              Long transactions hold locks and stop vacuum. From
+              {{ $labels.application_name }} on {{ $labels.datname }}.
+
+        - alert: PostgresXidWraparound
+          expr: |
+            max by (datname) (cnpg_pg_database_xid_age{namespace="qsology"}) > 1000000000
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.datname }} is heading for transaction ID wraparound"
+            description: >-
+              Its oldest transaction ID is {{ $value }} old. Find out why vacuum
+              isn't freezing it before PostgreSQL stops taking writes.
+
+        - alert: PostgresDeadlocks
+          expr: |
+            sum by (datname) (increase(cnpg_pg_stat_database_deadlocks{namespace="qsology"}[1h])) > 10
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} deadlocks in {{ $labels.datname }} in the last hour"
+
+    - name: valkey
+      rules:
+        # The app reaches whichever node is primary through HAProxy. With no
+        # primary, celery and the cache both stop
+        - alert: ValkeyNoPrimary
+          expr: |
+            (count(redis_instance_info{namespace="qsology", role=~"master|primary"}) or vector(0)) < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: Valkey has no primary
+            description: >-
+              No node says it's the primary, so celery and the cache can't
+              write. Check the Sentinels' logs.
+
+        - alert: ValkeySplitBrain
+          expr: |
+            count(redis_instance_info{namespace="qsology", role=~"master|primary"}) > 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $value }} Valkey nodes think they're the primary"
+            description: >-
+              Writes to the wrong one will be lost when Sentinel sorts it out.
+
+        # min-replicas-to-write is 1: with no replica the primary refuses writes
+        - alert: ValkeyNoReplicas
+          expr: |
+            max(redis_connected_slaves{namespace="qsology"}) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: The Valkey primary has no replica, and is refusing writes
+
+        - alert: ValkeyReplicaMissing
+          expr: |
+            max(redis_connected_slaves{namespace="qsology"}) < 2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: The Valkey primary has only {{ $value }} replica
+
+        - alert: ValkeyNodeDown
+          expr: |
+            redis_up{namespace="qsology"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Valkey in {{ $labels.pod }} isn't answering its exporter
+
+        - alert: ValkeyReplicaLinkDown
+          expr: |
+            redis_master_link_up{namespace="qsology"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} has lost its link to the primary"
+
+        # Only cache entries (with an expiry) are evicted. If celery's queues
+        # fill it, writes start failing
+        - alert: ValkeyMemoryHigh
+          expr: |
+            redis_memory_used_bytes{namespace="qsology"}
+              / (redis_memory_max_bytes{namespace="qsology"} > 0) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} is at {{ $value | humanizePercentage }} of maxmemory"
+
+        - alert: ValkeyAOFWriteFailing
+          expr: |
+            redis_aof_last_write_status{namespace="qsology"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Valkey in {{ $labels.pod }} can't write its append only file
+            description: >-
+              Usually a full disk. It refuses writes until it can.
+
+        - alert: ValkeyRejectingConnections
+          expr: |
+            increase(redis_rejected_connections_total{namespace="qsology"}[5m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: Valkey in {{ $labels.pod }} is rejecting connections (maxclients)
+
+    - name: rustfs
+      rules:
+        # Erasure coded 2+1: one node down is fine, two isn't. RustFS has no
+        # metrics of its own to scrape, so this is from Kubernetes
+        - alert: RustFSUnavailable
+          expr: |
+            kube_statefulset_status_replicas_ready{namespace="qsology", statefulset="rustfs"} < 2
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Only {{ $value }} RustFS node(s) ready, below quorum
+            description: >-
+              Objects can't be read or written: export downloads, and
+              PostgreSQL's WAL archive and backups, all fail.
+
+        - alert: RustFSDegraded
+          expr: |
+            kube_statefulset_status_replicas_ready{namespace="qsology", statefulset="rustfs"} < 3
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: A RustFS node is down; one more and storage stops

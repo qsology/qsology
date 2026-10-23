@@ -1,0 +1,58 @@
+# New images built from main are picked up by Flux, which commits the new
+# tag to QSOLOGY_IMAGE in cluster-settings.yaml (its "$imagepolicy"
+# marker), in this cluster's repo, so git always says what's running.
+# Needs the image-reflector and image-automation controllers:
+#   flux bootstrap ... --components-extra=image-reflector-controller,image-automation-controller
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: qsology
+  namespace: flux-system
+spec:
+  image: ghcr.io/qsology/qsology
+  interval: 5m
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: qsology
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: qsology
+  # Images from main are tagged main-<UTC timestamp>-<sha>, newest wins
+  filterTags:
+    pattern: '^main-(?P<ts>[0-9]{14})-[a-f0-9]{7}$'
+    extract: '$ts'
+  policy:
+    numerical:
+      order: asc
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: qsology
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: fluxcdbot
+        email: fluxcdbot@users.noreply.github.com
+      messageTemplate: |
+        Deploy qsology {{ range .Changed.Changes }}{{ .NewValue }}{{ break }}{{ end }}
+    # Straight to main. If main is protected, let Flux's deploy key bypass
+    # it, or push to another branch and merge the pull requests
+    push:
+      branch: main
+  update:
+    # This cluster's directory in its repo
+    path: ./clusters/production
+    strategy: Setters

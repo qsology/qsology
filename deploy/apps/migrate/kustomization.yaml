@@ -1,0 +1,9 @@
+# What the app needs before it can start: its settings, secrets and
+# service account, then the migrations for the image being deployed
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - config.yaml
+  - externalsecret.yaml
+  - migrate.yaml

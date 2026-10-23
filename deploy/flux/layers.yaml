@@ -1,0 +1,376 @@
+# The order everything is applied in. Each layer waits for those it
+# depends on to be ready:
+#
+#   qsology-namespaces          qsology's own namespaces
+#   qsology-envoy-gateway       operators, each installed by qsology or
+#   qsology-cert-manager        already in the cluster (see below)
+#   qsology-cloudnative-pg
+#   qsology-barman-cloud
+#   qsology-external-secrets
+#   qsology-prometheus-operator-crds
+#   qsology-kube-state-metrics
+#   qsology-alloy               Grafana Alloy
+#   qsology-infra-configs       issuers, the gateway
+#   qsology-infra-openbao       OpenBao and the store ESO reads it through
+#   qsology-data                network policies, Valkey, PostgreSQL, RustFS
+#   qsology-migrate             the app's settings and secrets, then
+#                               database migrations for the image
+#   qsology-app                 the web app, workers and beat
+#   qsology-monitoring          the monitors Alloy scrapes, alert rules
+#
+# Everything here, and every namespace it makes, starts with qsology so it
+# can share a cluster (and flux-system) with other things
+#
+# They all come from the qsology GitRepository (this repository, defined in
+# the cluster's own repo, see clusters/example/qsology.yaml), and fill in
+# ${...} from the cluster's qsology-cluster-settings ConfigMap
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-namespaces
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/infrastructure/namespaces
+  prune: true
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+# The operators. Each is its own layer, and qsology-cluster-settings says
+# for each whether qsology installs its own copy ("install") or uses one
+# the cluster already runs ("existing", an empty directory documenting what
+# it needs). Either way the layer becomes ready, so nothing after it
+# changes. They're never pruned: removing an operator removes its CRDs,
+# and with them every certificate, secret or database made from them
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-envoy-gateway
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/envoy-gateway/${ENVOY_GATEWAY}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+# cert-manager only watches Gateways if the Gateway API CRDs (from Envoy
+# Gateway) are there when it starts
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-cert-manager
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-envoy-gateway
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/cert-manager/${CERT_MANAGER}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-cloudnative-pg
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/cloudnative-pg/${CLOUDNATIVE_PG}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+# Its certificates come from cert-manager, and it runs beside the
+# CloudNativePG operator
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-barman-cloud
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-cert-manager
+    - name: qsology-cloudnative-pg
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/barman-cloud/${BARMAN_CLOUD}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-external-secrets
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/external-secrets/${EXTERNAL_SECRETS}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-prometheus-operator-crds
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/prometheus-operator-crds/${PROMETHEUS_OPERATOR_CRDS}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-kube-state-metrics
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-namespaces
+    - name: qsology-prometheus-operator-crds
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/operators/kube-state-metrics/${KUBE_STATE_METRICS}
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-alloy
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-namespaces
+    - name: qsology-prometheus-operator-crds
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/infrastructure/alloy
+  prune: true
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-infra-configs
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-namespaces
+    - name: qsology-cert-manager
+    - name: qsology-envoy-gateway
+    - name: qsology-alloy
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/infrastructure/configs
+  prune: true
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-infra-openbao
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-infra-configs
+    - name: qsology-external-secrets
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/infrastructure/openbao
+  prune: true
+  # OpenBao's pods aren't ready until someone unseals them (see
+  # deploy/README.md), so only check that the release itself went in
+  wait: false
+  healthChecks:
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: openbao
+      namespace: qsology-openbao
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-data
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-infra-openbao
+    - name: qsology-cloudnative-pg
+    - name: qsology-barman-cloud
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/apps/data
+  # Never delete databases or object storage because a file was removed
+  prune: false
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+# Migrations run as a Job. Jobs can't be changed, so Flux replaces it
+# (force) whenever the image changes, and the app waits for it to finish
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-migrate
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-data
+  interval: 1h
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/apps/migrate
+  prune: true
+  force: true
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-app
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-migrate
+  interval: 1h
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/apps/qsology
+  prune: true
+  wait: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-monitoring
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: qsology-alloy
+    - name: qsology-prometheus-operator-crds
+  interval: 1h
+  retryInterval: 5m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/monitoring
+  prune: true
+  wait: false
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings

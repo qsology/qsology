@@ -1,0 +1,207 @@
+# Valkey: the celery broker (database 0) and the Django cache (database 1).
+#
+# Three Valkey nodes (a primary and two replicas), three Sentinels that
+# promote a replica if the primary goes, and HAProxy in front sending
+# connections to whichever node the Sentinels agree is primary. The app
+# only knows valkey-haproxy:6379, so a failover looks like a dropped
+# connection, which celery and Django reconnect from. Every node keeps an
+# append only file, so a restart doesn't lose the queues either.
+#
+# Replication is asynchronous: a failover can lose the last second or so
+# of writes. A primary that can't see a replica refuses writes rather than
+# accept ones that would be lost (minReplicasToWrite).
+#
+# Sentinel and HAProxy are only in the chart's unreleased 1.0, so it comes
+# from git at a pinned commit. Move to https://valkey.io/valkey-helm/ when
+# 1.0.0 is published.
+#
+# Users (passwords from OpenBao, secret/qsology/valkey):
+#   default     admin, also used by the exporter and HAProxy's check
+#   replicator  replication and the Sentinels
+#   qsology     the app
+# Valkey reads them at start: after changing one, restart the StatefulSets
+# and the app
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: valkey-users
+  namespace: qsology
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: qsology-openbao
+  target:
+    name: valkey-users
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: default
+      remoteRef:
+        key: qsology/valkey
+        property: default
+    - secretKey: replicator
+      remoteRef:
+        key: qsology/valkey
+        property: replicator
+    - secretKey: qsology
+      remoteRef:
+        key: qsology/valkey
+        property: qsology
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: valkey-sentinel
+  namespace: qsology
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: qsology-openbao
+  target:
+    name: valkey-sentinel
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: sentinel
+      remoteRef:
+        key: qsology/valkey
+        property: sentinel
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: valkey
+  namespace: qsology
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: ./valkey
+      reconcileStrategy: Revision
+      sourceRef:
+        kind: GitRepository
+        name: qsology-valkey-helm
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    fullnameOverride: valkey
+    image:
+      tag: "9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd"
+    podSecurityContext:
+      runAsNonRoot: true
+      fsGroup: 1000
+      runAsUser: 1000
+      runAsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    # Must be longer than sentinel.preStopFailoverTimeoutSeconds, so a
+    # stopping primary hands over before it goes
+    terminationGracePeriodSeconds: 30
+    readinessProbe:
+      enabled: true
+    persistence:
+      enabled: true
+      size: 5Gi
+      storageClass: "${STORAGE_CLASS}"
+    extraConfig: |
+      appendonly yes
+      appendfsync everysec
+      # Below the container's memory limit. Only keys with an expiry
+      # (cache entries) are evicted, never celery's queues
+      maxmemory 768mb
+      maxmemory-policy volatile-lru
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: valkey
+            app.kubernetes.io/instance: valkey
+    podDisruptionBudget:
+      enabled: true
+      maxUnavailable: 1
+    auth:
+      enabled: true
+      usersExistingSecret: valkey-users
+      aclUsers:
+        default:
+          permissions: "~* &* +@all"
+        replicator:
+          # What Sentinel needs to watch the nodes, promote one and run a
+          # coordinated failover
+          permissions: >-
+            on ~* &* +multi +exec +ping +info +role +subscribe +publish
+            +slaveof +replicaof +config|rewrite +client +failover
+            +script|kill +psync +replconf
+        qsology:
+          permissions: "on ~* &* +@all -@admin"
+    replica:
+      enabled: true
+      replicas: 3
+      replicationUser: replicator
+      minReplicasToWrite: 1
+      minReplicasMaxLag: 10
+    sentinel:
+      enabled: true
+      replicas: 3
+      quorum: 2
+      existingSecret: valkey-sentinel
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          memory: 64Mi
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: valkey-sentinel
+              app.kubernetes.io/instance: valkey
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 1
+    haproxy:
+      enabled: true
+      replicas: 2
+      image:
+        tag: "3.2.25-alpine@sha256:5d97434a423c2533cfeb42874d45cf6d69a840b60334582dfbfd5008e94c80be"
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 1
+    metrics:
+      enabled: true
+      exporter:
+        image:
+          registry: docker.io
+          tag: "v1.93.0@sha256:6ca518a72f30f7f576ef92963de1b91d3c3f5fd3aeac949f878bfda183587820"
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 64Mi
+      serviceMonitor:
+        enabled: true

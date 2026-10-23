@@ -1,0 +1,104 @@
+# What Alloy scrapes, besides the monitors the Valkey and Alloy charts make
+# for themselves. RustFS has nothing to scrape, it pushes its metrics to
+# Alloy over OTLP
+# The web app: requests by URL pattern and status, added up across each
+# pod's gunicorn workers
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: qsology-web
+  namespace: qsology
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qsology
+      app.kubernetes.io/component: web
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+# Celery, through celery-exporter. Each scrape asks the workers what
+# they're doing, which takes a second or two
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: celery-exporter
+  namespace: qsology
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: celery-exporter
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+      scrapeTimeout: 15s
+---
+# The gateway's Envoy pods
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: envoy-proxy
+  namespace: ${ENVOY_GATEWAY_NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+      app.kubernetes.io/component: proxy
+  podMetricsEndpoints:
+    - port: metrics
+      path: /stats/prometheus
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: qsology-db
+  namespace: qsology
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: qsology-db
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+# Every OpenBao node, through the headless service. Metrics don't need a
+# token (unauthenticated_metrics_access), just the internal CA
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openbao
+  namespace: qsology-openbao
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+      openbao-internal: "true"
+  endpoints:
+    - port: https
+      scheme: https
+      path: /v1/sys/metrics
+      params:
+        format: ["prometheus"]
+      interval: 30s
+      tlsConfig:
+        serverName: openbao.qsology-openbao.svc
+        ca:
+          secret:
+            name: openbao-server-tls
+            key: ca.crt
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cert-manager
+  namespace: ${CERT_MANAGER_NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cert-manager
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: http-metrics
+      interval: 60s

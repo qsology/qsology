@@ -1,0 +1,67 @@
+# Everything that differs between clusters, substituted into the manifests
+# as ${NAME} by Flux (postBuild.substituteFrom). Nothing secret goes here,
+# secrets live in OpenBao
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qsology-cluster-settings
+  namespace: flux-system
+  labels:
+    # Re-apply the layers as soon as this changes (a new image, say),
+    # rather than at their next interval
+    reconcile.fluxcd.io/watch: Enabled
+data:
+  ENVIRONMENT: production
+  # The app's image. Flux's image automation (image-automation.yaml)
+  # rewrites this to each new build and commits it
+  QSOLOGY_IMAGE: ghcr.io/qsology/qsology:main # {"$imagepolicy": "flux-system:qsology"}
+  # Where users reach the app, and the S3 endpoint export downloads come
+  # from. Both need DNS pointing at the gateway's load balancer
+  QSOLOGY_DOMAIN: qsology.example.org
+  QSOLOGY_S3_DOMAIN: s3.qsology.example.org
+  # For Let's Encrypt
+  ACME_EMAIL: admin@example.org
+  # Storage classes. Data at rest is only as encrypted as the storage under
+  # it, PostgreSQL has no encryption of its own, so point this at an
+  # encrypted class (LUKS, an encrypted cloud disk, ...)
+  STORAGE_CLASS: standard
+  ENCRYPTED_STORAGE_CLASS: standard
+  # Where Alloy sends everything: Mimir (Prometheus remote write), Loki
+  # and Tempo (OTLP gRPC, host:port), the tenant (X-Scope-OrgID) to send
+  # it as, and the cluster label put on every series and log stream
+  MIMIR_REMOTE_WRITE_URL: http://mimir-gateway.monitoring.svc/api/v1/push
+  # Mimir's ruler API, without /prometheus (Alloy adds it), for the alert
+  # rules
+  MIMIR_RULER_URL: http://mimir-gateway.monitoring.svc
+  LOKI_PUSH_URL: http://loki-gateway.monitoring.svc/loki/api/v1/push
+  TEMPO_OTLP_ENDPOINT: tempo-distributor.monitoring.svc:4317
+  OBSERVABILITY_TENANT: qsology
+  CLUSTER_NAME: production
+  # Percentage of requests the gateway starts a trace for, everything
+  # after it follows the gateway's decision
+  TRACE_SAMPLING_PERCENT: "100"
+  # The operators qsology needs. "install" runs qsology's own copy, from
+  # deploy/operators/<name>/install; "existing" uses the one the cluster
+  # already runs, and deploy/operators/<name>/existing says what it has to
+  # provide. Two copies of one operator in a cluster fight over its CRDs and
+  # webhooks, so if the cluster has one, use it. Changing a running cluster
+  # from install to existing is a migration, not a setting (see
+  # deploy/README.md)
+  ENVOY_GATEWAY: install
+  # Where its Envoy pods run (the network policies and monitors look there),
+  # and the GatewayClass qsology's Gateway uses
+  ENVOY_GATEWAY_NAMESPACE: qsology-envoy-gateway-system
+  GATEWAY_CLASS: qsology-envoy
+  CERT_MANAGER: install
+  # Its cluster resource namespace: the internal CA's key lives there
+  CERT_MANAGER_NAMESPACE: qsology-cert-manager
+  CLOUDNATIVE_PG: install
+  CLOUDNATIVE_PG_NAMESPACE: qsology-cnpg-system
+  # CloudNativePG's Barman Cloud plugin, for WAL archiving and backups
+  BARMAN_CLOUD: install
+  EXTERNAL_SECRETS: install
+  # What OpenBao lets in, and logs it in as
+  EXTERNAL_SECRETS_NAMESPACE: qsology-external-secrets
+  EXTERNAL_SECRETS_SERVICE_ACCOUNT: external-secrets
+  PROMETHEUS_OPERATOR_CRDS: install
+  KUBE_STATE_METRICS: install

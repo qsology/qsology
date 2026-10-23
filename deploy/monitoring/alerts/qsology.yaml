@@ -1,0 +1,161 @@
+# The app: is it up, is it answering, and is celery keeping up.
+#
+# severity: critical  someone should look now, users are affected
+# severity: warning   look during working hours, it will get worse
+#
+# Alloy loads every PrometheusRule into Mimir's ruler and scopes the
+# queries to this cluster, so the rules don't need a cluster label
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: qsology-app
+  namespace: qsology
+spec:
+  groups:
+    - name: qsology-web
+      rules:
+        - alert: QsologyWebDown
+          expr: |
+            (sum(up{namespace="qsology", pod=~"qsology-web-.+"}) or vector(0)) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: No qsology web pod is answering
+            description: >-
+              None of the web pods can be scraped, so the site is most likely
+              down. Check `kubectl -n qsology get pods` and the pods' logs.
+
+        - alert: QsologyWebDegraded
+          expr: |
+            sum(up{namespace="qsology", pod=~"qsology-web-.+"}) < 2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Only {{ $value }} qsology web pod(s) up
+            description: >-
+              Fewer than two web pods have been up for 15 minutes; one more
+              failure takes the site down.
+
+        - alert: QsologyHighErrorRate
+          expr: |
+            sum(rate(django_http_requests_total{namespace="qsology", status=~"5.."}[5m]))
+              / sum(rate(django_http_requests_total{namespace="qsology"}[5m])) > 0.05
+            and sum(rate(django_http_requests_total{namespace="qsology"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $value | humanizePercentage }} of requests are failing"
+            description: >-
+              More than 5% of requests to the app have returned a 5xx for 5
+              minutes. The traces in Tempo show where, the logs in Loki why.
+
+        - alert: QsologySlowRoute
+          expr: |
+            histogram_quantile(0.95,
+              sum by (route, le) (rate(django_http_request_duration_seconds_bucket{namespace="qsology"}[10m]))
+            ) > 2
+            and sum by (route) (rate(django_http_request_duration_seconds_count{namespace="qsology"}[10m])) > 0.05
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.route }} is slow: p95 {{ $value | humanizeDuration }}"
+            description: >-
+              95% of requests to {{ $labels.route }} take under
+              {{ $value | humanizeDuration }}, over the 2s target, for 15 minutes.
+
+        - alert: QsologyNoHealthyBackends
+          expr: |
+            min by (envoy_cluster_name) (envoy_cluster_membership_healthy{envoy_cluster_name=~"httproute/qsology/.+"}) == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: The gateway has no healthy backend for {{ $labels.envoy_cluster_name }}
+            description: >-
+              Envoy sees no ready pods behind {{ $labels.envoy_cluster_name }},
+              so every request to it gets a 503.
+
+    - name: qsology-celery
+      rules:
+        - alert: CeleryNoWorkers
+          expr: |
+            (sum(celery_worker_up{namespace="qsology"}) or vector(0)) < 1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: No celery workers are up
+            description: >-
+              celery-exporter hasn't seen a worker heartbeat for 5 minutes.
+              Exports and imports aren't being processed.
+
+        - alert: CeleryQueueBacklog
+          expr: |
+            max by (queue_name) (celery_queue_length{namespace="qsology"}) > 100
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} tasks waiting in {{ $labels.queue_name }}"
+            description: >-
+              The queue has stayed over 100 for 15 minutes. Check whether the
+              workers' HPA is at its maximum, or a task is stuck.
+
+        - alert: CeleryTaskFailing
+          expr: |
+            sum by (name) (increase(celery_task_failed_total{namespace="qsology"}[30m])) > 5
+            and
+            sum by (name) (increase(celery_task_failed_total{namespace="qsology"}[30m]))
+              / (
+                sum by (name) (increase(celery_task_succeeded_total{namespace="qsology"}[30m]))
+                + sum by (name) (increase(celery_task_failed_total{namespace="qsology"}[30m]))
+              ) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Task {{ $labels.name }} is failing
+            description: >-
+              More than 10% of {{ $labels.name }} runs failed in the last 30
+              minutes. celery_task_failed_total's exception label says with what.
+
+        - alert: CeleryBeatDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="qsology", deployment="qsology-beat"} < 1
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: celery beat isn't running
+            description: >-
+              Scheduled tasks (tidying exports, refreshing references, deleting
+              accounts) aren't being queued.
+
+        - alert: CeleryExporterDown
+          expr: |
+            (sum(up{namespace="qsology", pod=~"celery-exporter-.+"}) or vector(0)) < 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: celery-exporter can't be scraped
+            description: >-
+              Celery's metrics, and the alerts on them, are blind until it's
+              back. CeleryNoWorkers will fire too, without meaning it.
+
+    - name: qsology-deploy
+      rules:
+        - alert: QsologyMigrationFailed
+          expr: |
+            kube_job_failed{namespace="qsology", job_name="qsology-migrate", condition="true"} > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: The database migrations failed
+            description: >-
+              The release is stuck before the app rolls out. See
+              `kubectl -n qsology logs job/qsology-migrate`.

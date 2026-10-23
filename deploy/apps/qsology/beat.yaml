@@ -1,0 +1,104 @@
+# Celery beat, which queues the scheduled tasks. There must only ever be
+# one, so it's a single pod that Kubernetes keeps running: Recreate means a
+# new one isn't started until the old one has gone, and if its node fails
+# it's moved after 30 seconds rather than the usual five minutes.
+#
+# A node that's cut off rather than down could still be running the old
+# pod for a while, so the scheduled tasks are all safe to run twice
+# (tidying exports, refreshing references, deleting accounts that are due)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qsology-beat
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: qsology
+    app.kubernetes.io/component: beat
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qsology
+      app.kubernetes.io/component: beat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qsology
+        app.kubernetes.io/component: beat
+    spec:
+      serviceAccountName: qsology
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: beat
+          image: ${QSOLOGY_IMAGE}
+          command:
+            - celery
+            - --app=config
+            - beat
+            - --loglevel=INFO
+            # When each task last ran. Lost with the pod, which only means
+            # each schedule starts counting again
+            - --schedule=/var/run/celery/celerybeat-schedule
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: qsology-beat
+            - name: DJANGO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qsology-db-app
+                  key: uri
+          envFrom:
+            - configMapRef:
+                name: qsology-config
+            - secretRef:
+                name: qsology-env
+          resources:
+            requests:
+              cpu: 25m
+              memory: 192Mi
+            limits:
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: schedule
+              mountPath: /var/run/celery
+            - name: tmp
+              mountPath: /tmp
+            - name: db-ca
+              mountPath: /etc/qsology/db-ca
+              readOnly: true
+      volumes:
+        - name: schedule
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: db-ca
+          secret:
+            secretName: qsology-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

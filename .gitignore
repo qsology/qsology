@@ -37,3 +37,6 @@ htmlcov/
 .iml
 # Exports stored locally when there is no S3 bucket
 private/
+
+# Local notes, not for the repository
+/TODO.md

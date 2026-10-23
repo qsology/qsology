@@ -1,0 +1,20 @@
+# The internal CA's certificate, for pods that only need to trust it (e.g.
+# RustFS talking to OpenBao). A certificate signed by the internal issuer
+# carries the CA in ca.crt, the certificate itself isn't used
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: internal-ca-bundle
+  namespace: qsology
+spec:
+  secretName: internal-ca-bundle
+  commonName: internal-ca-bundle.qsology.svc
+  dnsNames:
+    - internal-ca-bundle.qsology.svc
+  duration: 2160h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: qsology-internal

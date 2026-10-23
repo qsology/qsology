@@ -1,0 +1,147 @@
+# The way into the cluster: one Gateway, with a listener (and Let's Encrypt
+# certificate) per hostname. Apps attach HTTPRoutes to it from namespaces
+# labelled gateway-access: "true". Its GatewayClass (GATEWAY_CLASS) comes
+# from deploy/operators/envoy-gateway, or the cluster's own Envoy Gateway
+# How the gateway's Envoy pods run: two of them, tracing every request
+# they're asked to to Alloy. Envoy starts the trace
+# and hands it on in the traceparent header, so a request can be followed
+# from the edge through Django and celery to the database
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: public
+  namespace: qsology-gateway
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 2
+      envoyPDB:
+        minAvailable: 1
+      envoyService:
+        # Keeps the client's IP, rather than a node's
+        externalTrafficPolicy: Local
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: JSON
+            json:
+              start_time: "%START_TIME%"
+              method: "%REQ(:METHOD)%"
+              path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+              protocol: "%PROTOCOL%"
+              status: "%RESPONSE_CODE%"
+              flags: "%RESPONSE_FLAGS%"
+              bytes_received: "%BYTES_RECEIVED%"
+              bytes_sent: "%BYTES_SENT%"
+              duration_ms: "%DURATION%"
+              upstream: "%UPSTREAM_HOST%"
+              authority: "%REQ(:AUTHORITY)%"
+              user_agent: "%REQ(USER-AGENT)%"
+              client: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              request_id: "%REQ(X-REQUEST-ID)%"
+              traceparent: "%REQ(TRACEPARENT)%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout
+    tracing:
+      samplingRate: ${TRACE_SAMPLING_PERCENT}
+      provider:
+        type: OpenTelemetry
+        backendRefs:
+          - name: alloy
+            namespace: qsology-observability
+            port: 4317
+    metrics:
+      enableVirtualHostStats: true
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+  namespace: qsology-gateway
+  annotations:
+    # A certificate for each HTTPS listener's hostname
+    cert-manager.io/cluster-issuer: qsology-letsencrypt
+spec:
+  gatewayClassName: ${GATEWAY_CLASS}
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: public
+  listeners:
+    # Plain HTTP only redirects to HTTPS (and answers ACME challenges)
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: qsology
+      protocol: HTTPS
+      port: 443
+      hostname: "${QSOLOGY_DOMAIN}"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: qsology-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: "true"
+    # RustFS's S3 API, where export downloads come from
+    - name: s3
+      protocol: HTTPS
+      port: 443
+      hostname: "${QSOLOGY_S3_DOMAIN}"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: s3-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              gateway-access: "true"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: qsology-gateway
+spec:
+  parentRefs:
+    - name: public
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+# Every connection: generous buffers and timeouts for S3 uploads. Envoy
+# sets X-Forwarded-Proto itself, which is what Django trusts
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: public
+  namespace: qsology-gateway
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: public
+  connection:
+    bufferLimit: 4Mi
+  timeout:
+    http:
+      requestReceivedTimeout: 1h
+      idleTimeout: 15m

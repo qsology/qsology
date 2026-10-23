@@ -1,0 +1,6 @@
+# Grafana Alloy. Its layer waits for the prometheus-operator CRDs (for its
+# own ServiceMonitor, and the monitors it reads)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - alloy.yaml

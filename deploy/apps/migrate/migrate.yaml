@@ -1,0 +1,76 @@
+# Database migrations for the image being deployed, run before the app is
+# updated (the qsology Kustomization depends on this one). Flux replaces
+# the Job whenever the image changes
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qsology-migrate
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: qsology
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qsology
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: qsology
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: ${QSOLOGY_IMAGE}
+          command: ["python", "manage.py", "migrate", "--noinput"]
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: qsology-migrate
+            # Migrations aren't worth tracing
+            - name: OTEL_SDK_DISABLED
+              value: "true"
+            - name: DJANGO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qsology-db-app
+                  key: uri
+          envFrom:
+            - configMapRef:
+                name: qsology-config
+            - secretRef:
+                name: qsology-env
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: db-ca
+              mountPath: /etc/qsology/db-ca
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: db-ca
+          secret:
+            secretName: qsology-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt

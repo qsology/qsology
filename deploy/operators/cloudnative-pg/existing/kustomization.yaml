@@ -1,0 +1,8 @@
+# Using the cluster's own CloudNativePG (CLOUDNATIVE_PG: existing). It needs:
+#   - version 1.26 or newer, for the Barman Cloud plugin
+#   - CLOUDNATIVE_PG_NAMESPACE set to where the operator runs: the network
+#     policies let it reach PostgreSQL from there, and the plugin has to be
+#     installed beside it
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

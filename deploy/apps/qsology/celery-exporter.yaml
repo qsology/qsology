@@ -1,0 +1,84 @@
+# celery-exporter: celery's metrics, from the task events the workers send
+# (CELERY_WORKER_SEND_TASK_EVENTS) and the queue lengths in Valkey. Tasks
+# sent, started, succeeded, failed and retried by name, their runtimes,
+# which workers are up, and how long each queue is.
+#
+# One replica: it counts the events it sees, a second would just count
+# the same ones again. Its image is amd64 only
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-exporter
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: celery-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: celery-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: celery-exporter
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      securityContext:
+        runAsNonRoot: true
+        # The image's "exporter" user, which it only gives by name
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: docker.io/danihodovic/celery-exporter:0.12.2@sha256:91e0b314cb5d62f0b2cd0ccdd059178d2d26f816ae0df2a4eeeb6b3c6feb5937
+          env:
+            # The same broker, and Valkey user, as the workers
+            - name: CE_BROKER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qsology-env
+                  key: CELERY_BROKER_URL
+            # Reported even when no worker is consuming them
+            - name: CE_QUEUES
+              value: celery
+            # Reconnect after a Valkey failover rather than exit
+            - name: CE_RETRY_INTERVAL
+              value: "5"
+          ports:
+            - name: metrics
+              containerPort: 9808
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 15
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

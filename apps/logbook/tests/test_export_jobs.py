@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 import boto3
 import pytest
 import requests
+from apps.audit.models import AuditEntry, TaskRun, TaskRunStatus
 from apps.logbook import exports, tasks
 from apps.logbook.models import Export, ExportStatus, Logbook
 from apps.notifications.models import Notification
@@ -511,3 +512,77 @@ class TestS3:
         run(exports.tidy_exports, now=ready.expires_at)
         listing = s3.list_objects_v2(Bucket=BUCKET)
         assert listing.get("KeyCount", 0) == 0
+
+
+class TestAuditing:
+    """Every run for an export is recorded, and its owner can see what was
+    done"""
+
+    def actions(self, user):
+        return list(
+            AuditEntry.objects.for_user(user)
+            .order_by("created_at")
+            .values_list("action", flat=True)
+        )
+
+    def test_built(self, user, ready):
+        entry = AuditEntry.objects.for_user(user).get()
+        assert entry.action == "export.built"
+        assert entry.summary == (
+            f"Your export of {ready.name} was built: 3 QSOs as ADIF (.adi)"
+        )
+        assert entry.object_id == str(ready.pk)
+        assert list(AuditEntry.objects.about(ready)) == [entry]
+        assert entry.run.task == "apps.logbook.tasks.build_export"
+        assert entry.run.status == TaskRunStatus.SUCCEEDED
+
+    def test_tried_again_then_given_up(
+        self, user, three, monkeypatch, requested, run
+    ):
+        def broken(*args, **kwargs):
+            raise OSError("disk full")
+
+        export = requested()
+        monkeypatch.setattr(exports, "export_to", broken)
+        run(build_like_celery, export.pk)
+        assert self.actions(user) == [
+            "export.retrying",
+            "export.retrying",
+            "export.retrying",
+            "export.failed",
+        ]
+        # Users aren't shown what went wrong inside, staff are
+        summaries = AuditEntry.objects.values_list("summary", flat=True)
+        assert not any("disk full" in summary for summary in summaries)
+        runs = TaskRun.objects.filter(task="apps.logbook.tasks.build_export")
+        assert [r.status for r in runs.order_by("attempt")] == [
+            TaskRunStatus.RETRYING,
+            TaskRunStatus.RETRYING,
+            TaskRunStatus.RETRYING,
+            TaskRunStatus.FAILED,
+        ]
+        assert all("OSError: disk full" in r.error for r in runs)
+
+    def test_built_twice_is_for_staff(self, user, ready):
+        tasks.build_export.apply(args=[str(ready.pk)])
+        assert self.actions(user) == ["export.built"]
+        skipped = AuditEntry.objects.get(action="export.skipped")
+        assert not skipped.visible_to_user
+
+    def test_expired(self, user, ready, run):
+        run(exports.tidy_exports, now=ready.expires_at)
+        assert self.actions(user) == ["export.built", "export.expired"]
+
+    def test_queued_again_is_for_staff(
+        self, user, three, settings, requested, run
+    ):
+        export = requested()
+        later = timezone.now() + settings.EXPORT_STALE_AFTER
+        run(exports.tidy_exports, now=later)
+        assert self.actions(user) == ["export.built"]
+        requeued = AuditEntry.objects.get(action="export.requeued")
+        assert requeued.object_id == str(export.pk)
+        assert not requeued.visible_to_user
+
+    def test_nobody_else_sees_them(self, user, other_user, ready):
+        assert not AuditEntry.objects.visible_to(other_user).exists()

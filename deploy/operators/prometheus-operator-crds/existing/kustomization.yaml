@@ -1,0 +1,6 @@
+# Using the prometheus-operator CRDs the cluster already has, from
+# kube-prometheus-stack say (PROMETHEUS_OPERATOR_CRDS: existing). It needs
+# ServiceMonitor, PodMonitor and PrometheusRule (monitoring.coreos.com/v1)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

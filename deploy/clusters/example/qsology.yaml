@@ -1,0 +1,73 @@
+# The qsology repository, as the source of everything Flux deploys here.
+# Only its deploy/ directory is fetched
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: qsology
+  namespace: flux-system
+spec:
+  interval: 10m
+  url: https://github.com/qsology/qsology
+  ref:
+    # Following main means any change merged to deploy/ goes out within
+    # the interval. To take changes only when you choose, pin a commit
+    # (or a tag, once there are releases) and move it on in this repo:
+    #   commit: <sha>
+    branch: main
+  ignore: |
+    /*
+    !/deploy/
+---
+# Applies deploy/flux from it: the chart sources, and the layers that
+# deploy everything else in order. The settings are filled in here too, as
+# they choose which operators the layers install
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: qsology-flux
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 2m
+  sourceRef:
+    kind: GitRepository
+    name: qsology
+  path: ./deploy/flux
+  # A layer removed here (or upstream) is deleted along with what it
+  # deployed, except qsology-data, which never deletes anything
+  prune: true
+  # The layers report their own health (flux get kustomizations); waiting
+  # for all of them here would time out while OpenBao is sealed
+  wait: false
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: qsology-cluster-settings
+  # Changes for this cluster, on top of what's in the qsology repository.
+  # Patches here change the layers; a patch inside a layer's spec.patches
+  # changes what that layer deploys. For example:
+  #
+  # patches:
+  #   # No alert rules or monitors
+  #   - patch: |
+  #       $patch: delete
+  #       apiVersion: kustomize.toolkit.fluxcd.io/v1
+  #       kind: Kustomization
+  #       metadata:
+  #         name: qsology-monitoring
+  #         namespace: flux-system
+  #   # Let the web app scale to 20 pods
+  #   - target:
+  #       kind: Kustomization
+  #       name: qsology-app
+  #     patch: |
+  #       - op: add
+  #         path: /spec/patches
+  #         value:
+  #           - target:
+  #               kind: HorizontalPodAutoscaler
+  #               name: qsology-web
+  #             patch: |
+  #               - op: replace
+  #                 path: /spec/maxReplicas
+  #                 value: 20

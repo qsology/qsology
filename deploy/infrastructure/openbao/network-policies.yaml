@@ -1,0 +1,62 @@
+# Who can reach OpenBao, enforced by Cilium: the External Secrets Operator
+# (secrets for the apps), RustFS (its encryption keys), Alloy (metrics)
+# and the other OpenBao nodes. Out, it only needs the other nodes and the
+# API server, which it asks whether a pod's service account token is good.
+# Anything else is dropped; see it with
+#   hubble observe -n qsology-openbao --verdict DROPPED
+#
+# People use kubectl port-forward, which this doesn't affect. When the
+# second cluster that unseals this one exists, allow egress to it here
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: openbao
+  namespace: qsology-openbao
+spec:
+  endpointSelector: {}
+  ingress:
+    # The kubelet's probes
+    - fromEntities:
+        - host
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: ${EXTERNAL_SECRETS_NAMESPACE}
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology
+            app.kubernetes.io/name: rustfs
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+            - port: "8201"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+            - port: "8201"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver

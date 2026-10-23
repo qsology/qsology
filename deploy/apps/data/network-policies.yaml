@@ -1,0 +1,345 @@
+# Who can talk to whom in the qsology namespace, enforced by Cilium.
+#
+# Every pod here is selected by at least one policy below, so anything
+# not allowed is dropped, both ways. To see what's being dropped:
+#   hubble observe -n qsology --verdict DROPPED
+#
+# kubectl port-forward isn't affected, it doesn't go through the network.
+
+# Everyone: DNS (through Cilium's proxy, so the hostname rules below work)
+# and the kubelet's probes
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: baseline
+  namespace: qsology
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - host
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              - matchPattern: "*"
+---
+# The app (web, workers, beat, migrations): its database, cache and
+# telemetry
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: qsology
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: qsology
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: qsology-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: valkey-haproxy
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "4318"
+              protocol: TCP
+---
+# Web and workers: the gateway in, and out to the sites the app fetches
+# from (QRZ lookups, the DXCC/POTA/SOTA/IOTA lists, geocoding) and to the
+# public S3 hostname for exports. That hostname is the gateway's load
+# balancer: Cilium usually turns that into the Envoy pods themselves, but
+# if the load balancer is outside the cluster it's the hostname
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: qsology-web-worker
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [qsology]
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [web, worker]
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: ${ENVOY_GATEWAY_NAMESPACE}
+            app.kubernetes.io/name: envoy
+            app.kubernetes.io/component: proxy
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+    # Alloy scraping the web pods' metrics
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "9100"
+              protocol: TCP
+  egress:
+    - toFQDNs:
+        - matchName: xmldata.qrz.com
+        - matchName: lotw.arrl.org
+        - matchName: pota.app
+        - matchName: storage.sota.org.uk
+        - matchName: www.iota-world.org
+        - matchName: nominatim.openstreetmap.org
+        - matchName: "${QSOLOGY_S3_DOMAIN}"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: ${ENVOY_GATEWAY_NAMESPACE}
+            app.kubernetes.io/name: envoy
+            app.kubernetes.io/component: proxy
+      toPorts:
+        - ports:
+            # Envoy's port for the gateway's 443
+            - port: "10443"
+              protocol: TCP
+---
+# PostgreSQL: the app, each other (replication), the CloudNativePG
+# operator and Alloy in. Out to each other, RustFS (WAL archive and
+# backups) and the API server, which the instance manager runs through
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: qsology-db
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: qsology-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: qsology
+        - matchLabels:
+            cnpg.io/cluster: qsology-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: ${CLOUDNATIVE_PG_NAMESPACE}
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: qsology-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rustfs
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+---
+# Valkey, its Sentinels and HAProxy talk among themselves; the app comes
+# in through HAProxy, Alloy scrapes the exporters
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: valkey
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/instance: valkey
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/instance: valkey
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+            - port: "26379"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "9121"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/instance: valkey
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+            - port: "26379"
+              protocol: TCP
+---
+# celery-exporter: reads events and queue lengths from Valkey, scraped by
+# Alloy
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: celery-exporter
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: celery-exporter
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "9808"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: valkey-haproxy
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: valkey-haproxy
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: valkey-haproxy
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: qsology
+        - matchLabels:
+            app.kubernetes.io/name: celery-exporter
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+---
+# RustFS: the gateway (S3 for users and export uploads), PostgreSQL's
+# backups and the bucket Job in, and the nodes to each other. Out to
+# OpenBao for its encryption keys, and Alloy for telemetry
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: rustfs
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: rustfs
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: ${ENVOY_GATEWAY_NAMESPACE}
+            app.kubernetes.io/name: envoy
+            app.kubernetes.io/component: proxy
+        - matchLabels:
+            cnpg.io/cluster: qsology-db
+        - matchLabels:
+            app.kubernetes.io/name: rustfs-buckets
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rustfs
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rustfs
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-openbao
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: qsology-observability
+            app.kubernetes.io/name: alloy
+      toPorts:
+        - ports:
+            - port: "4318"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: rustfs-buckets
+  namespace: qsology
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: rustfs-buckets
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: rustfs
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP

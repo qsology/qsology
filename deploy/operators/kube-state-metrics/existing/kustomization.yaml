@@ -1,0 +1,7 @@
+# Using the cluster's own kube-state-metrics (KUBE_STATE_METRICS:
+# existing). Its metrics have to reach the same Mimir tenant with this
+# cluster's cluster label, with the objects' own namespace and pod labels
+# (honorLabels), or the Kubernetes alerts in deploy/monitoring see nothing
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

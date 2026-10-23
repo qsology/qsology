@@ -1,0 +1,7 @@
+# Using the Barman Cloud plugin the cluster's CloudNativePG already has
+# (BARMAN_CLOUD: existing). It needs:
+#   - plugin v0.15 or newer, registered as barman-cloud.cloudnative-pg.io
+#   - its ObjectStore CRD (barmancloud.cnpg.io/v1)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

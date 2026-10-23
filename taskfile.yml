@@ -48,18 +48,31 @@ tasks:
     desc: "check format of code using ruff"
     cmds:
       - "uv run ruff format --check {{.CLI_ARGS | default \".\"}}"
+  # makemigrations skips apps that have no migrations yet unless they're
+  # named, so these name every app in LOCAL_APPS
   migrate:check:
-    desc: "Check Migrations are uptodate"
+    desc: "Check migrations are up to date for every local app"
     env:
       DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    vars:
+      LOCAL_APPS: &local-apps
+        sh: >-
+          DJANGO_SETTINGS_MODULE={{.TEST_SETTINGS}} uv run python -c
+          "import django; django.setup();
+          from django.apps import apps; from django.conf import settings;
+          print(' '.join(apps.get_containing_app_config(n).label for n in settings.LOCAL_APPS))"
     cmds:
-      - "uv run python manage.py makemigrations --check --dry-run"
+      - "uv run python manage.py makemigrations --check --dry-run {{.LOCAL_APPS}}"
   migrate:make:
-    desc: "Make migrations"
+    desc: "Make migrations for every local app, or the apps given: task migrate:make -- logbook"
     env:
       DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    vars:
+      LOCAL_APPS: *local-apps
     cmds:
-      - "uv run python manage.py makemigrations {{.CLI_ARGS}}"
+      - "uv run python manage.py makemigrations {{.CLI_ARGS | default .LOCAL_APPS}}"
+      # makemigrations doesn't write them the way ruff formats
+      - "uv run ruff format --quiet apps/*/migrations"
   migrate:
     desc: "Run DB migrations"
     env:
@@ -72,6 +85,97 @@ tasks:
       DJANGO_SETTINGS_MODULE: "{{.DEV_SETTINGS}}"
     cmds:
       - "uv run python manage.py check"
+  deploy:check:
+    desc: "Check the Kubernetes manifests in deploy/ build, validate and render. Needs kustomize, kubeconform and helm"
+    cmds:
+      - "uv run python scripts/ci/check_deploy.py"
+  # Images normally come from the Image workflow on main. These are for
+  # building one by hand, e.g. to try a branch on a cluster. Hand built
+  # tags are dev-<UTC timestamp>-<sha>, which Flux's image policy (main-...)
+  # ignores, so they're only deployed by setting QSOLOGY_IMAGE to one.
+  # They work with docker (with buildx) or podman, including podman
+  # installed as docker, whose buildx can't --load or --push
+  image:build:
+    desc: "Build the container image locally as qsology:dev. IMAGE and TAG override the name: task image:build TAG=mine. Needs docker or podman"
+    vars:
+      ENGINE: &engine
+        sh: "if docker --version 2>/dev/null | grep -qi podman || ! command -v docker >/dev/null; then echo podman; else echo docker; fi"
+      IMAGE: '{{.IMAGE | default "qsology"}}'
+      TAG: '{{.TAG | default "dev"}}'
+      REVISION:
+        sh: "git rev-parse HEAD"
+    preconditions:
+      - &has-engine
+        sh: "command -v docker || command -v podman"
+        msg: "Needs docker or podman"
+    cmds:
+      # Plain build: docker's (BuildKit) and podman's both keep the image
+      - >-
+        {{.ENGINE}} build
+        --build-arg VERSION={{.TAG}}
+        --build-arg REVISION={{.REVISION}}
+        --tag {{.IMAGE}}:{{.TAG}}
+        {{.CLI_ARGS}} .
+  image:login:
+    desc: "Log docker or podman in to ghcr.io with the gh CLI's token (needs the write:packages scope: gh auth refresh -s write:packages)"
+    vars:
+      ENGINE: *engine
+    preconditions:
+      - *has-engine
+      - sh: "gh auth status"
+        msg: "Log in to GitHub first: gh auth login"
+      # ghcr.io accepts any token at login, and only refuses it on push
+      - sh: "gh api -i user | grep -i '^x-oauth-scopes:' | grep -q 'write:packages'"
+        msg: "The gh token can't push packages. Add the scope with: gh auth refresh -s write:packages (a fine-grained token in GH_TOKEN can't push to ghcr.io at all)"
+    cmds:
+      - "gh auth token | {{.ENGINE}} login ghcr.io --username \"$(gh api user --jq .login)\" --password-stdin"
+  image:push:
+    desc: "Build the container image and push it to ghcr.io as dev-<timestamp>-<sha>. IMAGE, TAG and PLATFORMS override the defaults: task image:push TAG=mine"
+    vars:
+      ENGINE: *engine
+      IMAGE: '{{.IMAGE | default "ghcr.io/qsology/qsology"}}'
+      REVISION:
+        sh: "git rev-parse HEAD"
+      # Unless TAG is given, dev-<timestamp>-<sha>, with -dirty when there
+      # are uncommitted changes, as the image won't match the commit it's
+      # named after
+      DEFAULT_TAG:
+        sh: >-
+          echo "dev-$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short=7 HEAD)$(git diff --quiet HEAD 2>/dev/null || echo -dirty)"
+      TAG: '{{.TAG | default .DEFAULT_TAG}}'
+      PLATFORMS: '{{.PLATFORMS | default "linux/amd64"}}'
+      # Where podman pushes to. Its own variable so a test can push
+      # somewhere other than a registry (e.g. oci-archive:/tmp/image.tar)
+      DESTINATION: '{{.DESTINATION | default (print "docker://" .IMAGE ":" .TAG)}}'
+    preconditions:
+      - *has-engine
+      - sh: '[ "{{.ENGINE}}" = podman ] || docker buildx version'
+        msg: "Needs docker with the buildx plugin, or podman"
+    cmds:
+      # Podman builds each platform into a local manifest list, then pushes
+      # the list. Remove any list left from an earlier build with the same
+      # tag first, or the new images are added to the old ones
+      - cmd: "podman manifest rm {{.IMAGE}}:{{.TAG}} >/dev/null 2>&1 || true"
+        if: '[ "{{.ENGINE}}" = podman ]'
+      - cmd: >-
+          podman build
+          --platform {{.PLATFORMS}}
+          --manifest {{.IMAGE}}:{{.TAG}}
+          --build-arg VERSION={{.TAG}}
+          --build-arg REVISION={{.REVISION}}
+          {{.CLI_ARGS}} .
+        if: '[ "{{.ENGINE}}" = podman ]'
+      - cmd: "podman manifest push --all {{.IMAGE}}:{{.TAG}} {{.DESTINATION}}"
+        if: '[ "{{.ENGINE}}" = podman ]'
+      - cmd: >-
+          docker buildx build --push
+          --platform {{.PLATFORMS}}
+          --build-arg VERSION={{.TAG}}
+          --build-arg REVISION={{.REVISION}}
+          --tag {{.IMAGE}}:{{.TAG}}
+          {{.CLI_ARGS}} .
+        if: '[ "{{.ENGINE}}" = docker ]'
+      - "echo 'Pushed {{if eq .ENGINE \"podman\"}}{{trimPrefix \"docker://\" .DESTINATION}}{{else}}{{.IMAGE}}:{{.TAG}}{{end}}, deploy it by setting QSOLOGY_IMAGE in the cluster settings'"
   check:
     desc: "Run development / testing checks"
     cmds:

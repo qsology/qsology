@@ -1,6 +1,8 @@
 import logging
 
+from apps.audit.recording import record
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 from celery import shared_task
 
@@ -19,7 +21,15 @@ def delete_scheduled_users() -> int:
         # what "pending deletion" means
         if not user.is_pending_deletion:
             continue
-        user._hard_delete()
+        with transaction.atomic():
+            # Kept for staff, by the user's id only
+            record(
+                user.pk,
+                "account.deleted",
+                "Account deleted once its grace period was over",
+                data={"scheduled_for": user.scheduled_deletion_at.isoformat()},
+            )
+            user._hard_delete()
         deleted += 1
     logger.info("Deleted %d users scheduled for deletion", deleted)
     return deleted

@@ -1,0 +1,26 @@
+# Only what the image needs, never secrets or local state
+.git
+.github
+.forgejo
+.venv
+venv
+.env
+.env.*
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.hypothesis
+.coverage
+coverage.xml
+htmlcov
+.idea
+.vscode
+media
+private
+staticfiles
+deploy
+scripts
+tests
+Dockerfile
+.dockerignore

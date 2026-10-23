@@ -3,6 +3,7 @@ from datetime import timedelta
 import pytest
 from apps.accounts.models import User
 from apps.accounts.tasks import delete_scheduled_users
+from apps.audit.models import AuditEntry
 from config.celery import app
 from django.conf import settings
 from django.utils import timezone
@@ -94,3 +95,19 @@ class TestBeatSchedule:
         entry = app.conf.beat_schedule["delete-scheduled-users"]
         assert entry["task"] == "apps.accounts.tasks.delete_scheduled_users"
         assert entry["schedule"] == timedelta(hours=24)
+
+
+class TestAuditing:
+    def test_deletion_is_kept_for_staff_by_id(self, make_user):
+        user = make_user()
+        user.schedule_deletion(grace_period=timedelta(days=-1))
+        user_pk = user.pk
+
+        delete_scheduled_users.delay()
+
+        entry = AuditEntry.objects.get()
+        assert entry.action == "account.deleted"
+        assert entry.user is None
+        assert entry.user_pk == user_pk
+        assert not entry.visible_to_user
+        assert entry.run.task == "apps.accounts.tasks.delete_scheduled_users"

@@ -1,0 +1,84 @@
+# Where charts come from. Versions are pinned in each HelmRelease
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: qsology-jetstack
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://charts.jetstack.io
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: qsology-envoy-gateway
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: oci://docker.io/envoyproxy/gateway-helm
+  ref:
+    tag: v1.9.2
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: qsology-cloudnative-pg
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://cloudnative-pg.github.io/charts
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: qsology-external-secrets
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://charts.external-secrets.io
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: qsology-openbao
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://openbao.github.io/openbao-helm
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: qsology-grafana
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://grafana.github.io/helm-charts
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: qsology-prometheus-community
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://prometheus-community.github.io/helm-charts
+---
+# Only for the valkey chart, whose Sentinel support isn't released yet
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: qsology-valkey-helm
+  namespace: flux-system
+spec:
+  interval: 12h
+  url: https://github.com/valkey-io/valkey-helm
+  ref:
+    # "Feat/1.0 Breaking changes" (#272), 2026-10-19
+    commit: e84054453b7869fa61f033376775de56010abb24
+  ignore: |
+    /*
+    !/valkey/

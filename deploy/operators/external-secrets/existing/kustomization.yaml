@@ -1,0 +1,10 @@
+# Using the cluster's own External Secrets Operator (EXTERNAL_SECRETS:
+# existing). It needs:
+#   - the external-secrets.io/v1 API (operator 0.17 or newer)
+#   - EXTERNAL_SECRETS_NAMESPACE and EXTERNAL_SECRETS_SERVICE_ACCOUNT set to
+#     where it runs and its service account: qsology's ClusterSecretStore
+#     logs into OpenBao as that account, and OpenBao's network policy lets
+#     that namespace in
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

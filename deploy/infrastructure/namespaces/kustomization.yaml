@@ -1,0 +1,6 @@
+# qsology's own namespaces. The operators' are made by their layers
+# (deploy/operators), when qsology installs them
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml

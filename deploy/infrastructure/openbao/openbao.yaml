@@ -1,0 +1,160 @@
+# OpenBao, where secrets live: three nodes replicating with Raft, TLS from
+# the internal CA. It starts sealed and must be initialised and unsealed by
+# hand, see deploy/README.md
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-server-tls
+  namespace: qsology-openbao
+spec:
+  secretName: openbao-server-tls
+  duration: 2160h # 90 days
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  commonName: openbao.qsology-openbao.svc
+  dnsNames:
+    - openbao
+    - openbao.qsology-openbao
+    - openbao.qsology-openbao.svc
+    - openbao.qsology-openbao.svc.cluster.local
+    - openbao-active.qsology-openbao.svc
+    - openbao-internal
+    - "*.openbao-internal"
+    - "*.openbao-internal.qsology-openbao.svc"
+    - "*.openbao-internal.qsology-openbao.svc.cluster.local"
+  ipAddresses:
+    - 127.0.0.1
+  usages:
+    - server auth
+    - client auth
+  issuerRef:
+    kind: ClusterIssuer
+    name: qsology-internal
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openbao
+  namespace: qsology-openbao
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: openbao
+      version: 0.30.2 # OpenBao v2.7.1
+      sourceRef:
+        kind: HelmRepository
+        name: qsology-openbao
+        namespace: flux-system
+  # Sealed pods are never ready, so don't wait for them
+  install:
+    disableWait: true
+    remediation:
+      retries: 3
+  upgrade:
+    disableWait: true
+    remediation:
+      retries: 3
+  values:
+    global:
+      tlsDisable: false
+    injector:
+      # Secrets reach pods through the External Secrets Operator instead
+      enabled: false
+    ui:
+      enabled: true
+      serviceType: ClusterIP
+    server:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+      # Spread over nodes where it can be, but still runs on fewer than 3
+      affinity: |
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: openbao
+                    app.kubernetes.io/instance: openbao
+                    component: server
+                topologyKey: kubernetes.io/hostname
+      extraEnvironmentVars:
+        BAO_CACERT: /openbao/tls/ca.crt
+      volumes:
+        - name: tls
+          secret:
+            secretName: openbao-server-tls
+      volumeMounts:
+        - name: tls
+          mountPath: /openbao/tls
+          readOnly: true
+      dataStorage:
+        enabled: true
+        size: 10Gi
+        storageClass: "${ENCRYPTED_STORAGE_CLASS}"
+      auditStorage:
+        enabled: true
+        size: 10Gi
+        storageClass: "${ENCRYPTED_STORAGE_CLASS}"
+      livenessProbe:
+        enabled: true
+        # Sealed and standby nodes are alive too
+        path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+      ha:
+        enabled: true
+        replicas: 3
+        raft:
+          enabled: true
+          setNodeId: true
+          config: |
+            ui = true
+
+            listener "tcp" {
+              address = "[::]:8200"
+              cluster_address = "[::]:8201"
+              tls_cert_file = "/openbao/tls/tls.crt"
+              tls_key_file = "/openbao/tls/tls.key"
+              tls_client_ca_file = "/openbao/tls/ca.crt"
+              tls_min_version = "tls13"
+              # cert-manager renews the certificate, this picks it up
+              tls_auto_reload = true
+              telemetry {
+                # Prometheus can scrape every node, not just the leader
+                unauthenticated_metrics_access = true
+              }
+            }
+
+            storage "raft" {
+              path = "/openbao/data"
+              retry_join {
+                leader_api_addr = "https://openbao-0.openbao-internal:8200"
+                leader_ca_cert_file = "/openbao/tls/ca.crt"
+              }
+              retry_join {
+                leader_api_addr = "https://openbao-1.openbao-internal:8200"
+                leader_ca_cert_file = "/openbao/tls/ca.crt"
+              }
+              retry_join {
+                leader_api_addr = "https://openbao-2.openbao-internal:8200"
+                leader_ca_cert_file = "/openbao/tls/ca.crt"
+              }
+            }
+
+            telemetry {
+              prometheus_retention_time = "30s"
+              disable_hostname = true
+            }
+
+            service_registration "kubernetes" {}
+    serverTelemetry:
+      # Made in deploy/monitoring instead, which can be left out
+      serviceMonitor:
+        enabled: false

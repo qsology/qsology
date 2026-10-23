@@ -1,0 +1,40 @@
+# cert-manager, for the gateway's certificates (Let's Encrypt) and the
+# internal CA everything else uses. Its layer waits for Envoy Gateway so
+# the Gateway API CRDs are there when it starts, otherwise it won't watch
+# Gateways
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cert-manager
+  namespace: ${CERT_MANAGER_NAMESPACE}
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: cert-manager
+      version: v1.21.2
+      sourceRef:
+        kind: HelmRepository
+        name: qsology-jetstack
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      strategy: rollback
+  values:
+    crds:
+      enabled: true
+      # Deleting the release must never delete every certificate
+      keep: true
+    replicaCount: 2
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    config:
+      apiVersion: controller.config.cert-manager.io/v1alpha1
+      kind: ControllerConfiguration
+      gatewayAPI:
+        enabled: true

@@ -1,0 +1,83 @@
+# Makes the buckets, safe to run again. Default encryption is turned on
+# for each, so everything written is encrypted with RustFS's KMS keys
+# whether or not the writer asks. Backups are versioned, so an overwritten
+# or deleted backup can be got back
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-buckets
+  namespace: qsology
+  annotations:
+    # Jobs can't be changed, Flux replaces this one if it is
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rustfs-buckets
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: buckets
+          image: docker.io/amazon/aws-cli:2.37.10@sha256:3dacc5db57c923c4223e949795f538ecf1f2212b2b7d5a028b47b97f91564c0d
+          command: ["/bin/bash", "-euo", "pipefail", "-c"]
+          args:
+            - |
+              s3() { aws --endpoint-url http://rustfs.qsology.svc:9000 "$@"; }
+              until s3 s3api list-buckets > /dev/null; do
+                echo "Waiting for RustFS"; sleep 5
+              done
+              for bucket in qsology-exports postgres-backups; do
+                s3 s3api head-bucket --bucket "$bucket" 2>/dev/null \
+                  || s3 s3api create-bucket --bucket "$bucket"
+                s3 s3api put-bucket-encryption --bucket "$bucket" \
+                  --server-side-encryption-configuration \
+                  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+                echo "$bucket ready"
+              done
+              s3 s3api put-bucket-versioning --bucket postgres-backups \
+                --versioning-configuration Status=Enabled
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rustfs-root
+                  key: RUSTFS_ACCESS_KEY
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rustfs-root
+                  key: RUSTFS_SECRET_KEY
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: AWS_REQUEST_CHECKSUM_CALCULATION
+              value: when_required
+            - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+              value: when_required
+            - name: HOME
+              value: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

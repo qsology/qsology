@@ -1,0 +1,28 @@
+# Envoy Gateway, the Gateway API implementation. The chart brings the
+# Gateway API CRDs (experimental channel) with it
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: envoy-gateway
+  namespace: ${ENVOY_GATEWAY_NAMESPACE}
+spec:
+  interval: 1h
+  chartRef:
+    kind: OCIRepository
+    name: qsology-envoy-gateway
+    namespace: flux-system
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    # Helm leaves CRDs alone on upgrade unless told otherwise
+    crds: CreateReplace
+    remediation:
+      retries: 3
+      strategy: rollback
+  values:
+    deployment:
+      replicas: 2
+    podDisruptionBudget:
+      minAvailable: 1

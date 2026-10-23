@@ -1,0 +1,33 @@
+# Pod Security Admission keeps everything to the restricted profile, except
+# where noted
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qsology-observability
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qsology-openbao
+  labels:
+    # The chart's pods ask for IPC_LOCK
+    pod-security.kubernetes.io/enforce: baseline
+---
+# The Gateway (and so its certificates) live here, apart from the apps
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qsology-gateway
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qsology
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    # Lets the namespace's HTTPRoutes attach to the shared Gateway
+    gateway-access: "true"

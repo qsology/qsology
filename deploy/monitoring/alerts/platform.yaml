@@ -1,0 +1,314 @@
+# What the app stands on: OpenBao, the gateway and its certificates, the
+# Kubernetes objects in our namespaces, and the monitoring itself
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: qsology-platform
+  namespace: qsology-observability
+spec:
+  groups:
+    - name: openbao
+      rules:
+        # Expected after every restart until auto-unseal exists: unseal it
+        # (deploy/README.md, step 2)
+        - alert: OpenBaoSealed
+          expr: |
+            vault_core_unsealed{namespace="qsology-openbao"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: OpenBao in {{ $labels.pod }} is sealed
+            description: >-
+              A sealed node serves nothing. Unseal it with 3 of the keys. While
+              all are sealed, RustFS can't get its encryption keys and no
+              secret can be synced.
+
+        - alert: OpenBaoNoActiveNode
+          expr: |
+            (sum(vault_core_active{namespace="qsology-openbao"}) or vector(0)) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: OpenBao has no active node
+
+        - alert: OpenBaoRaftUnhealthy
+          expr: |
+            min(vault_autopilot_healthy{namespace="qsology-openbao"}) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: OpenBao's Raft cluster is unhealthy
+            description: >-
+              Autopilot considers a node unhealthy. See
+              `bao operator raft autopilot state`.
+
+        - alert: OpenBaoNoFailureTolerance
+          expr: |
+            min(vault_autopilot_failure_tolerance{namespace="qsology-openbao"}) < 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: OpenBao can't lose another node
+
+        - alert: OpenBaoAuditFailing
+          expr: |
+            sum(increase(vault_audit_log_request_failure{namespace="qsology-openbao"}[5m]))
+              + sum(increase(vault_audit_log_response_failure{namespace="qsology-openbao"}[5m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: OpenBao can't write its audit log
+            description: >-
+              With its only audit device failing, OpenBao refuses requests.
+              Usually the audit volume is full.
+
+        - alert: OpenBaoSlowRequests
+          expr: |
+            max(vault_core_handle_request{namespace="qsology-openbao", quantile="0.99"}) > 1000
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "OpenBao's slowest requests take {{ $value }}ms"
+
+    - name: gateway
+      rules:
+        - alert: GatewayDown
+          expr: |
+            (sum(up{namespace="${ENVOY_GATEWAY_NAMESPACE}"}) or vector(0)) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: No gateway (Envoy) pod is up
+            description: Nothing can reach the app or export downloads.
+
+        - alert: GatewayUpstreamErrors
+          expr: |
+            sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_xx{envoy_response_code_class="5"}[5m]))
+              / sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_completed[5m])) > 0.05
+            and sum by (envoy_cluster_name) (rate(envoy_cluster_upstream_rq_completed[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value | humanizePercentage }} of requests to {{ $labels.envoy_cluster_name }} fail"
+
+        # cert-manager's own labels: the certificate's namespace is
+        # exported_namespace
+        - alert: CertificateNotReady
+          expr: |
+            max by (exported_namespace, name) (certmanager_certificate_ready_status{condition!="True"}) == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Certificate {{ $labels.exported_namespace }}/{{ $labels.name }} isn't ready
+
+        # Let's Encrypt certificates renew with 30 days left; under 14 means
+        # renewing has been failing for two weeks
+        - alert: CertificateExpiringSoon
+          expr: |
+            min by (exported_namespace, name) (certmanager_certificate_expiration_timestamp_seconds > 0) - time()
+              < 14 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.exported_namespace }}/{{ $labels.name }} expires in {{ $value | humanizeDuration }}"
+            description: >-
+              It should have renewed by now. See
+              `kubectl -n {{ $labels.exported_namespace }} describe certificate {{ $labels.name }}`.
+
+        - alert: CertificateExpiringVerySoon
+          expr: |
+            min by (exported_namespace, name) (certmanager_certificate_expiration_timestamp_seconds > 0) - time()
+              < 3 * 86400
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.exported_namespace }}/{{ $labels.name }} expires in {{ $value | humanizeDuration }}"
+
+        - alert: CertManagerRateLimited
+          expr: |
+            sum by (host) (rate(certmanager_http_acme_client_request_count{status="429"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Let's Encrypt is rate limiting cert-manager
+
+    - name: kubernetes
+      rules:
+        - alert: PodCrashLooping
+          expr: |
+            max by (namespace, pod, container) (
+              kube_pod_container_status_waiting_reason{namespace=~"qsology|qsology-openbao|qsology-observability|${ENVOY_GATEWAY_NAMESPACE}", reason="CrashLoopBackOff"}
+            ) == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is crash looping"
+
+        - alert: ContainerOOMKilled
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace=~"qsology|qsology-openbao|qsology-observability|${ENVOY_GATEWAY_NAMESPACE}"}[15m]) > 0
+            and on (namespace, pod, container)
+              kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) was OOM killed"
+            description: It hit its memory limit. Raise the limit or find the leak.
+
+        - alert: DeploymentReplicasMissing
+          expr: |
+            kube_deployment_status_replicas_available{namespace=~"qsology|qsology-openbao|qsology-observability|${ENVOY_GATEWAY_NAMESPACE}"}
+              < kube_deployment_spec_replicas
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.deployment }} is short of replicas"
+
+        - alert: StatefulSetReplicasMissing
+          expr: |
+            kube_statefulset_status_replicas_ready{namespace=~"qsology|qsology-openbao|qsology-observability"}
+              < kube_statefulset_replicas
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.statefulset }} is short of ready replicas"
+
+        - alert: AutoscalerAtMaximum
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="qsology"}
+              >= kube_horizontalpodautoscaler_spec_max_replicas
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.horizontalpodautoscaler }} has been at its maximum for 30 minutes"
+            description: It can't scale further; raise the maximum or look at why it's busy.
+
+        - alert: JobFailed
+          expr: |
+            kube_job_failed{namespace=~"qsology|qsology-openbao|qsology-observability", condition="true"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Job {{ $labels.namespace }}/{{ $labels.job_name }} failed
+
+        - alert: VolumeFillingUp
+          expr: |
+            kubelet_volume_stats_available_bytes{namespace=~"qsology|qsology-openbao|qsology-observability"}
+              / kubelet_volume_stats_capacity_bytes < 0.15
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has {{ $value | humanizePercentage }} free"
+
+        - alert: VolumeAlmostFull
+          expr: |
+            kubelet_volume_stats_available_bytes{namespace=~"qsology|qsology-openbao|qsology-observability"}
+              / kubelet_volume_stats_capacity_bytes < 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has {{ $value | humanizePercentage }} free"
+            description: >-
+              PostgreSQL, Valkey, RustFS and OpenBao all stop taking writes when
+              their volume is full. Expand the PVC.
+
+        - alert: VolumeFullIn24Hours
+          expr: |
+            kubelet_volume_stats_available_bytes{namespace=~"qsology|qsology-openbao|qsology-observability"}
+              / kubelet_volume_stats_capacity_bytes < 0.4
+            and predict_linear(kubelet_volume_stats_available_bytes{namespace=~"qsology|qsology-openbao|qsology-observability"}[6h], 24 * 3600) < 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} will be full within a day"
+
+    - name: monitoring
+      rules:
+        # Always firing. Have Alertmanager send it somewhere that alerts
+        # when it STOPS arriving (a dead man's switch), as that means the
+        # alerting itself is broken
+        - alert: Watchdog
+          expr: vector(1)
+          labels:
+            severity: none
+          annotations:
+            summary: Alerting is working
+
+        # Nothing is arriving from this cluster at all: Alloy is down, or
+        # can't reach Mimir
+        - alert: ClusterMetricsMissing
+          expr: |
+            absent(up{job=~".+"})
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: No metrics have arrived from this cluster for 10 minutes
+            description: Every other alert is blind. Check Alloy.
+
+        - alert: AlloyRemoteWriteFailing
+          expr: |
+            sum by (pod) (rate(prometheus_remote_storage_samples_failed_total{namespace="qsology-observability"}[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Alloy in {{ $labels.pod }} is failing to send metrics to Mimir
+
+        - alert: AlloyDroppingLogs
+          expr: |
+            sum by (pod, reason) (rate(loki_write_dropped_entries_total{namespace="qsology-observability"}[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Alloy in {{ $labels.pod }} is dropping logs ({{ $labels.reason }})"
+
+        - alert: AlloyFailingToSendTraces
+          expr: |
+            sum by (pod) (rate(otelcol_exporter_send_failed_spans_total{namespace="qsology-observability"}[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Alloy in {{ $labels.pod }} is failing to send traces to Tempo
+
+        - alert: AlloyUnhealthyComponents
+          expr: |
+            sum by (pod) (alloy_component_controller_running_components{namespace="qsology-observability", health_type!="healthy"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Alloy in {{ $labels.pod }} has unhealthy components
+            description: >-
+              See its UI: `kubectl -n qsology-observability port-forward svc/alloy 12345`.
+
+        - alert: AlloyClusterNotConverging
+          expr: |
+            stddev(sum without (state) (cluster_node_peers{namespace="qsology-observability"})) != 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: The Alloy pods disagree about who's in their cluster
+            description: Scrape targets and logs may be missed or collected twice.

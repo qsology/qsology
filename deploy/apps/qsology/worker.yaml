@@ -1,0 +1,152 @@
+# Celery workers, scaled on CPU between 2 and 20. Tasks are acknowledged
+# late, so one lost with its pod is run again by another worker
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qsology-worker
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: qsology
+    app.kubernetes.io/component: worker
+spec:
+  # No replicas here, the autoscaler below owns them
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qsology
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qsology
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: qsology
+      automountServiceAccountToken: false
+      # Time for running tasks to finish before the pod goes
+      terminationGracePeriodSeconds: 300
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: qsology
+              app.kubernetes.io/component: worker
+      containers:
+        - name: worker
+          image: ${QSOLOGY_IMAGE}
+          command:
+            - celery
+            - --app=config
+            - worker
+            - --loglevel=INFO
+            - --concurrency=4
+            # Recycle each process now and then, so a slow leak can't build up
+            - --max-tasks-per-child=200
+            - --without-gossip
+            - --without-mingle
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: qsology-worker
+            - name: DJANGO_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qsology-db-app
+                  key: uri
+          envFrom:
+            - configMapRef:
+                name: qsology-config
+            - secretRef:
+                name: qsology-env
+          # Restarted if it stops answering a ping over the broker
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - celery --app=config inspect ping --destination "celery@$HOSTNAME" --timeout 10
+            initialDelaySeconds: 60
+            periodSeconds: 120
+            timeoutSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1536Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Exports are built in temporary files here before uploading
+            - name: tmp
+              mountPath: /tmp
+            - name: db-ca
+              mountPath: /etc/qsology/db-ca
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: db-ca
+          secret:
+            secretName: qsology-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qsology-worker
+  namespace: qsology
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: qsology-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    # Scale down slowly, a worker may be part way through a long export
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: qsology-worker
+  namespace: qsology
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qsology
+      app.kubernetes.io/component: worker

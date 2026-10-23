@@ -1,0 +1,11 @@
+# Using the cluster's own Envoy Gateway (ENVOY_GATEWAY: existing). It needs:
+#   - the Gateway API CRDs, experimental channel, and Envoy Gateway's own
+#     (EnvoyProxy, ClientTrafficPolicy)
+#   - a GatewayClass for it, named in GATEWAY_CLASS
+#   - its Envoy pods in ENVOY_GATEWAY_NAMESPACE, the network policies and
+#     monitors look for them there
+#   - Gateway-level infrastructure.parametersRef (on by default), for
+#     qsology's EnvoyProxy settings: replicas, access logs and tracing
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

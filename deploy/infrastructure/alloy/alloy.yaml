@@ -1,0 +1,349 @@
+# Grafana Alloy: everything observable leaves the cluster through it.
+#   - traces (OTLP from Envoy, the app, celery and RustFS) go to Tempo
+#   - metrics pushed over OTLP, and scraped from every ServiceMonitor and
+#     PodMonitor, go to Mimir
+#   - every pod's logs, read through the Kubernetes API (no hostPath), go
+#     to Loki, with the trace id from the line kept as structured metadata
+#   - alert rules (PrometheusRules, deploy/monitoring/alerts) go to Mimir's
+#     ruler, which sends what fires to its Alertmanager
+#
+# Three pods in a cluster: scrape targets and log streams are shared out
+# between them, and anything can push OTLP to any of them. Request rate
+# and latency per route aren't worked out here, as each pod only sees some
+# of the spans; turn on Tempo's metrics-generator for those.
+#
+# Where things go is in qsology-cluster-settings. The config below is Alloy's
+# syntax, which has no ${...} of its own, so Flux fills those in
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alloy
+  namespace: qsology-observability
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: alloy
+      version: 1.13.1 # alloy 1.20.1
+      sourceRef:
+        kind: HelmRepository
+        name: qsology-grafana
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      strategy: rollback
+  values:
+    fullnameOverride: alloy
+    crds:
+      # PodLogs, which isn't used
+      create: false
+    controller:
+      type: deployment
+      replicas: 3
+      podDisruptionBudget:
+        enabled: true
+        maxUnavailable: 1
+      volumes:
+        extra:
+          - name: storage
+            emptyDir: {}
+    # The image's user is alloy (473) but it doesn't switch to it itself
+    global:
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 473
+        runAsGroup: 473
+        fsGroup: 473
+        seccompProfile:
+          type: RuntimeDefault
+    serviceMonitor:
+      enabled: true
+    alloy:
+      enableReporting: false
+      clustering:
+        enabled: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 473
+        runAsGroup: 473
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      mounts:
+        extra:
+          # Its storage path: the remote write WAL, log positions
+          - name: storage
+            mountPath: /tmp/alloy
+      extraPorts:
+        - name: otlp-grpc
+          port: 4317
+          targetPort: 4317
+          protocol: TCP
+          appProtocol: grpc
+        - name: otlp-http
+          port: 4318
+          targetPort: 4318
+          protocol: TCP
+      resources:
+        requests:
+          cpu: 100m
+          memory: 384Mi
+        limits:
+          memory: 1Gi
+      configMap:
+        content: |
+          logging {
+            level  = "info"
+            format = "logfmt"
+          }
+
+          // OTLP pushed in: traces, and the app's and RustFS's metrics
+
+          otelcol.receiver.otlp "default" {
+            grpc { }
+            http { }
+            output {
+              metrics = [otelcol.processor.memory_limiter.default.input]
+              traces  = [otelcol.processor.memory_limiter.default.input]
+            }
+          }
+
+          otelcol.processor.memory_limiter "default" {
+            check_interval         = "5s"
+            limit_percentage       = 80
+            spike_limit_percentage = 25
+            output {
+              metrics = [otelcol.processor.k8sattributes.default.input]
+              traces  = [otelcol.processor.k8sattributes.default.input]
+            }
+          }
+
+          // Which pod, deployment and namespace it came from
+          otelcol.processor.k8sattributes "default" {
+            extract {
+              metadata = [
+                "k8s.namespace.name",
+                "k8s.pod.name",
+                "k8s.deployment.name",
+                "k8s.statefulset.name",
+                "k8s.node.name",
+              ]
+            }
+            output {
+              metrics = [otelcol.processor.batch.default.input]
+              traces  = [otelcol.processor.batch.default.input]
+            }
+          }
+
+          otelcol.processor.batch "default" {
+            output {
+              metrics = [otelcol.exporter.prometheus.default.input]
+              traces  = [otelcol.exporter.otlp.tempo.input]
+            }
+          }
+
+          otelcol.exporter.otlp "tempo" {
+            client {
+              endpoint = "${TEMPO_OTLP_ENDPOINT}"
+              headers  = { "X-Scope-OrgID" = "${OBSERVABILITY_TENANT}" }
+              tls {
+                insecure = true
+              }
+            }
+          }
+
+          otelcol.exporter.prometheus "default" {
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // Scraped: every ServiceMonitor and PodMonitor in the cluster,
+          // shared out between the Alloy pods
+
+          prometheus.operator.servicemonitors "default" {
+            forward_to = [prometheus.remote_write.mimir.receiver]
+            clustering {
+              enabled = true
+            }
+          }
+
+          prometheus.operator.podmonitors "default" {
+            forward_to = [prometheus.remote_write.mimir.receiver]
+            clustering {
+              enabled = true
+            }
+          }
+
+          // Every node's kubelet: volume usage, and cAdvisor's per
+          // container CPU, memory and OOM kills. Kubelets' serving
+          // certificates are usually self-signed, so they aren't verified;
+          // the service account token still authenticates the scrape
+
+          discovery.kubernetes "nodes" {
+            role = "node"
+          }
+
+          discovery.relabel "kubelet" {
+            targets = discovery.kubernetes.nodes.targets
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "node"
+            }
+          }
+
+          discovery.relabel "cadvisor" {
+            targets = discovery.relabel.kubelet.output
+            rule {
+              replacement  = "/metrics/cadvisor"
+              target_label = "__metrics_path__"
+            }
+          }
+
+          prometheus.scrape "kubelet" {
+            targets           = discovery.relabel.kubelet.output
+            job_name          = "kubelet"
+            scheme            = "https"
+            bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            tls_config {
+              insecure_skip_verify = true
+            }
+            clustering {
+              enabled = true
+            }
+            forward_to = [prometheus.relabel.kubelet.receiver]
+          }
+
+          prometheus.relabel "kubelet" {
+            rule {
+              source_labels = ["__name__"]
+              regex         = "kubelet_volume_stats_.+|kubelet_running_pods|up"
+              action        = "keep"
+            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          prometheus.scrape "cadvisor" {
+            targets           = discovery.relabel.cadvisor.output
+            job_name          = "cadvisor"
+            scheme            = "https"
+            bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            tls_config {
+              insecure_skip_verify = true
+            }
+            clustering {
+              enabled = true
+            }
+            forward_to = [prometheus.relabel.cadvisor.receiver]
+          }
+
+          // Only what's used, and only real containers (not the pod's
+          // sandbox, which has no container name)
+          prometheus.relabel "cadvisor" {
+            rule {
+              source_labels = ["__name__"]
+              regex         = "container_cpu_usage_seconds_total|container_cpu_cfs_(throttled_)?periods_total|container_memory_working_set_bytes|container_oom_events_total|container_network_(receive|transmit)_bytes_total|up"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__name__", "container"]
+              regex         = "container_(cpu|memory|oom).*;"
+              action        = "drop"
+            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          prometheus.remote_write "mimir" {
+            endpoint {
+              url     = "${MIMIR_REMOTE_WRITE_URL}"
+              headers = { "X-Scope-OrgID" = "${OBSERVABILITY_TENANT}" }
+            }
+            external_labels = { cluster = "${CLUSTER_NAME}" }
+          }
+
+          // Alert rules: every PrometheusRule in the cluster, loaded into
+          // Mimir's ruler (one Alloy pod does it, picked by the cluster).
+          // Their queries only see this cluster's series, and their alerts
+          // say which cluster they're from
+
+          mimir.rules.kubernetes "default" {
+            address         = "${MIMIR_RULER_URL}"
+            tenant_id       = "${OBSERVABILITY_TENANT}"
+            external_labels = { cluster = "${CLUSTER_NAME}" }
+            extra_query_matchers {
+              matcher {
+                name       = "cluster"
+                match_type = "="
+                value      = "${CLUSTER_NAME}"
+              }
+            }
+          }
+
+          // Logs: every container in the cluster, through the API
+
+          discovery.kubernetes "pods" {
+            role = "pod"
+          }
+
+          discovery.relabel "pods" {
+            targets = discovery.kubernetes.pods.targets
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_container_name"]
+              target_label  = "container"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              target_label  = "app"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_component"]
+              target_label  = "component"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+              separator     = "/"
+              target_label  = "job"
+            }
+          }
+
+          loki.source.kubernetes "pods" {
+            targets    = discovery.relabel.pods.output
+            forward_to = [loki.process.pods.receiver]
+            clustering {
+              enabled = true
+            }
+          }
+
+          // The trace id from the app's "trace=..." and Envoy's
+          // traceparent, so a log line links to its trace. Lines outside
+          // a trace say trace=0 and are left alone
+          loki.process "pods" {
+            stage.regex {
+              expression = `(?:trace=|"traceparent":"00-)(?P<trace_id>[0-9a-f]{32})`
+            }
+            stage.structured_metadata {
+              values = { trace_id = "" }
+            }
+            forward_to = [loki.write.loki.receiver]
+          }
+
+          loki.write "loki" {
+            endpoint {
+              url       = "${LOKI_PUSH_URL}"
+              tenant_id = "${OBSERVABILITY_TENANT}"
+            }
+            external_labels = { cluster = "${CLUSTER_NAME}" }
+          }

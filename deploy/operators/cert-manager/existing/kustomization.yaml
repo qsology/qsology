@@ -1,0 +1,10 @@
+# Using the cluster's own cert-manager (CERT_MANAGER: existing). It needs:
+#   - Gateway API support turned on (gatewayAPI.enabled in its controller
+#     config, or --enable-gateway-api), for the Let's Encrypt certificates
+#     on the Gateway and their HTTP-01 challenges
+#   - CERT_MANAGER_NAMESPACE set to its cluster resource namespace (where
+#     it runs, unless --cluster-resource-namespace says otherwise): the
+#     internal CA's key and the Let's Encrypt account key go there
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

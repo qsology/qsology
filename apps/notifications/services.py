@@ -6,6 +6,7 @@ been committed, so nobody is told about something that didn't happen"""
 
 import logging
 
+from apps.audit.recording import record
 from apps.notifications import channels
 from apps.notifications.models import Notification
 from django.db import transaction
@@ -52,6 +53,7 @@ def send(notification_id) -> list[str]:
         pk=notification_id
     )
     wanted = channels.preferred_channels(notification.user, notification.kind)
+    sent, failed = [], []
     for name in wanted:
         if name in notification.sent_via:
             continue
@@ -61,9 +63,18 @@ def send(notification_id) -> list[str]:
             logger.exception(
                 "Sending notification %s via %s failed", notification.pk, name
             )
+            failed.append(name)
             continue
+        sent.append(name)
         notification.sent_via = [*notification.sent_via, name]
         Notification.objects.filter(pk=notification.pk).update(
             sent_via=notification.sent_via
         )
+    record(
+        notification.user_id,
+        "notification.sent",
+        f"{notification.kind} sent via {', '.join(sent) or 'nothing'}",
+        obj=notification,
+        data={"kind": notification.kind, "sent": sent, "failed": failed},
+    )
     return notification.sent_via

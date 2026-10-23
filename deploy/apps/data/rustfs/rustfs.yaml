@@ -1,0 +1,276 @@
+# RustFS, the S3 compatible object store: export downloads and PostgreSQL's
+# WAL archive and backups.
+#
+# Three pods with a drive each, erasure coded 2 data + 1 parity (EC:1), so
+# any one pod can be lost without losing data or availability. The pods
+# may share nodes. Objects are encrypted at rest with keys held in
+# OpenBao's transit engine (KMS)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rustfs
+  namespace: qsology
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: rustfs-root
+  namespace: qsology
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: qsology-openbao
+  target:
+    name: rustfs-root
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      data:
+        RUSTFS_ACCESS_KEY: "{{ .access_key }}"
+        RUSTFS_SECRET_KEY: "{{ .secret_key }}"
+  data:
+    - secretKey: access_key
+      remoteRef:
+        key: qsology/rustfs-root
+        property: access_key
+    - secretKey: secret_key
+      remoteRef:
+        key: qsology/rustfs-root
+        property: secret_key
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: rustfs
+spec:
+  serviceName: rustfs-headless
+  replicas: 3
+  # All three have to be up to form the erasure set, start them together
+  podManagementPolicy: Parallel
+  minReadySeconds: 45
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustfs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rustfs
+    spec:
+      serviceAccountName: rustfs
+      # The token logs in to OpenBao for encryption keys
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread over nodes where there are enough, but not required to be
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: rustfs
+      containers:
+        - name: rustfs
+          image: docker.io/rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+          command: ["/usr/bin/rustfs"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RUSTFS_VOLUMES
+              value: "http://rustfs-{0...2}.rustfs-headless.qsology.svc.cluster.local:9000/data"
+            # Finds its own drive without waiting on DNS
+            - name: RUSTFS_LOCAL_ENDPOINT_HOST
+              value: "$(POD_NAME).rustfs-headless.qsology.svc.cluster.local"
+            - name: RUSTFS_ADDRESS
+              value: ":9000"
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: "true"
+            - name: RUSTFS_CONSOLE_ADDRESS
+              value: ":9001"
+            - name: RUSTFS_REGION
+              value: us-east-1
+            # 2 data + 1 parity, the most parity three drives can have
+            - name: RUSTFS_STORAGE_CLASS_STANDARD
+              value: "EC:1"
+            # Logs to stdout, not a file
+            - name: RUSTFS_OBS_LOG_DIRECTORY
+              value: ""
+            # Metrics and traces to the collector, RustFS has no scrape
+            # endpoint of its own
+            - name: RUSTFS_OBS_ENDPOINT
+              value: http://alloy.qsology-observability.svc:4318
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "rustfs.cluster.id=qsology,deployment.environment.name=${ENVIRONMENT}"
+            # Encryption keys from OpenBao's transit engine, logging in as
+            # this pod's service account (role rustfs, see deploy/README.md)
+            - name: RUSTFS_KMS_ENABLE
+              value: "true"
+            - name: RUSTFS_KMS_BACKEND
+              value: vault-transit
+            - name: RUSTFS_KMS_VAULT_ADDRESS
+              value: https://openbao-active.qsology-openbao.svc:8200
+            - name: RUSTFS_KMS_VAULT_KUBERNETES_ROLE
+              value: rustfs
+            - name: RUSTFS_KMS_VAULT_CA_CERT
+              value: /etc/rustfs/openbao-ca/ca.crt
+            - name: RUSTFS_KMS_VAULT_MOUNT_PATH
+              value: transit
+            - name: RUSTFS_KMS_DEFAULT_KEY_ID
+              value: rustfs-default
+          envFrom:
+            - secretRef:
+                name: rustfs-root
+          ports:
+            - name: s3
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: s3
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: s3
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Not ready until the erasure set has quorum
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: s3
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: logs
+              mountPath: /logs
+            - name: openbao-ca
+              mountPath: /etc/rustfs/openbao-ca
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: logs
+          emptyDir: {}
+        - name: openbao-ca
+          secret:
+            secretName: internal-ca-bundle
+            items:
+              - key: ca.crt
+                path: ca.crt
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "${STORAGE_CLASS}"
+        resources:
+          requests:
+            storage: 50Gi
+---
+# Lets the pods find each other, including before they're ready
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-headless
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: rustfs
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: rustfs
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+  namespace: qsology
+  labels:
+    app.kubernetes.io/name: rustfs
+spec:
+  selector:
+    app.kubernetes.io/name: rustfs
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+    # The web console, not exposed through the gateway, reach it with
+    # kubectl port-forward
+    - name: console
+      port: 9001
+      targetPort: console
+---
+# 2 + 1 parity survives losing one pod, never let a drain take two
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rustfs
+  namespace: qsology
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rustfs
+---
+# The S3 API through the gateway, for export downloads (signed links).
+# Uploads and downloads can be large and slow, so no request timeout
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rustfs
+  namespace: qsology
+spec:
+  parentRefs:
+    - name: public
+      namespace: qsology-gateway
+      sectionName: s3
+  hostnames:
+    - "${QSOLOGY_S3_DOMAIN}"
+  rules:
+    - backendRefs:
+        - name: rustfs
+          port: 9000
+      timeouts:
+        request: "0s"

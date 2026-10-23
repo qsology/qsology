@@ -2,6 +2,7 @@ import logging
 from typing import ClassVar
 
 import pytest
+from apps.audit.models import AuditEntry
 from apps.notifications import channels, services
 from apps.notifications.models import Notification
 
@@ -141,6 +142,26 @@ class TestSend:
         user.schedule_deletion()
         user._hard_delete()
         assert not Notification.objects.exists()
+
+
+class TestAuditing:
+    def test_sending_is_recorded_for_staff(
+        self, user, recorder, settings, django_capture_on_commit_callbacks
+    ):
+        settings.NOTIFICATION_DEFAULT_CHANNELS = ["broken", "recorder"]
+        with django_capture_on_commit_callbacks(execute=True):
+            notification = notify(user)
+        entry = AuditEntry.objects.get()
+        assert entry.action == "notification.sent"
+        assert entry.user == user
+        assert not entry.visible_to_user
+        assert entry.object_id == str(notification.pk)
+        assert entry.data == {
+            "kind": "test.thing",
+            "sent": ["recorder"],
+            "failed": ["broken"],
+        }
+        assert entry.run.task == "apps.notifications.tasks.send_notification"
 
 
 def test_channel_must_send():

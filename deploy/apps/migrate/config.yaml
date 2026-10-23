@@ -1,0 +1,32 @@
+# Settings for the web app, workers and beat that aren't secret. Secrets
+# come from OpenBao, see externalsecret.yaml. ${...} values are filled in
+# by Flux from the qsology-cluster-settings ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qsology-config
+  namespace: qsology
+data:
+  DJANGO_SETTINGS_MODULE: config.settings.production
+  DJANGO_ALLOWED_HOSTS: "${QSOLOGY_DOMAIN}"
+  DJANGO_CSRF_TRUSTED_ORIGINS: "https://${QSOLOGY_DOMAIN}"
+  DJANGO_LOG_LEVEL: INFO
+  # Connections are kept for a minute, CNPG's -rw service follows failover
+  DJANGO_DATABASE_CONN_MAX_AGE: "60"
+  # Every database connection is TLS, checked against the cluster's CA
+  PGSSLMODE: verify-full
+  PGSSLROOTCERT: /etc/qsology/db-ca/ca.crt
+  # Exports go to RustFS, through its public endpoint so the signed
+  # download links work in users' browsers
+  QSOLOGY_EXPORTS_S3_BUCKET: qsology-exports
+  QSOLOGY_EXPORTS_S3_ENDPOINT_URL: "https://${QSOLOGY_S3_DOMAIN}"
+  QSOLOGY_EXPORTS_S3_REGION: us-east-1
+  QSOLOGY_EXPORTS_S3_ADDRESSING_STYLE: path
+  # Traces and metrics to the OpenTelemetry collector
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy.qsology-observability.svc:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  # Follow the gateway's sampling decision, sample everything that starts
+  # here (celery beat)
+  OTEL_TRACES_SAMPLER: parentbased_always_on
+  OTEL_PYTHON_LOG_CORRELATION: "true"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=${ENVIRONMENT}"

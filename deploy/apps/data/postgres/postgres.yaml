@@ -1,0 +1,136 @@
+# PostgreSQL, run by CloudNativePG: a primary and a streaming replica on
+# another node where there is one, with automatic failover.
+#
+# Encryption: every client and replication connection is TLS (plain
+# connections are refused), data at rest is on ENCRYPTED_STORAGE_CLASS
+# (PostgreSQL has no encryption of its own), and the WAL archive and base
+# backups in RustFS are encrypted at rest with keys held in OpenBao
+#
+# The WAL is archived continuously to RustFS by the Barman Cloud plugin,
+# with a base backup every night, so the database can be restored to any
+# moment in the last 30 days
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: postgres-backups-s3
+  namespace: qsology
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: qsology-openbao
+  target:
+    name: postgres-backups-s3
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: ACCESS_KEY_ID
+      remoteRef:
+        key: qsology/rustfs-backups
+        property: access_key
+    - secretKey: ACCESS_SECRET_KEY
+      remoteRef:
+        key: qsology/rustfs-backups
+        property: secret_key
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: qsology-backups
+  namespace: qsology
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    # No trailing slash, RustFS 1.0.x can't list a prefix with "//" in it
+    # (rustfs/rustfs#8591), which barman makes from one
+    destinationPath: s3://postgres-backups/qsology
+    endpointURL: http://rustfs.qsology.svc:9000
+    s3Credentials:
+      accessKeyId:
+        name: postgres-backups-s3
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: postgres-backups-s3
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: zstd
+      encryption: AES256
+      maxParallel: 4
+    data:
+      compression: gzip
+      encryption: AES256
+      jobs: 2
+  instanceSidecarConfiguration:
+    env:
+      # Newer boto3 checksums aren't understood by every S3 compatible store
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: qsology-db
+  namespace: qsology
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  primaryUpdateStrategy: unsupervised
+  # The replica on a different node to the primary, where there is one
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: preferred
+    topologyKey: kubernetes.io/hostname
+  postgresql:
+    # A commit waits for the replica to have it too. "preferred" keeps
+    # writing if the replica is down, "required" would stop the app
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+    parameters:
+      max_connections: "200"
+      shared_buffers: 256MB
+      log_min_duration_statement: "1000"
+    # TLS or nothing
+    pg_hba:
+      - hostnossl all all all reject
+  bootstrap:
+    initdb:
+      database: qsology
+      owner: qsology
+      dataChecksums: true
+  storage:
+    size: 20Gi
+    storageClass: "${ENCRYPTED_STORAGE_CLASS}"
+  walStorage:
+    size: 10Gi
+    storageClass: "${ENCRYPTED_STORAGE_CLASS}"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: qsology-backups
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: qsology-db-nightly
+  namespace: qsology
+spec:
+  # Seconds first: 03:00 every day
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  immediate: true
+  cluster:
+    name: qsology-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

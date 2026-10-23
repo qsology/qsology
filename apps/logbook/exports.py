@@ -13,6 +13,7 @@ import tempfile
 from collections.abc import Iterator
 from typing import TextIO
 
+from apps.audit.recording import record
 from apps.logbook.formats import adi, adx, jsonfmt
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -125,6 +126,13 @@ def _claim(export_id):
             export.attempts += 1
             export.save(update_fields=["status", "started_at", "attempts"])
             return export
+        record(
+            export.owner_id,
+            "export.skipped",
+            "Already built, or being built by another worker",
+            obj=export,
+            data={"status": export.status},
+        )
     return None
 
 
@@ -180,6 +188,14 @@ def build_export(export_id):
         export.finished_at = now
         export.expires_at = now + settings.EXPORT_RETENTION
         export.save()
+        record(
+            export.owner_id,
+            "export.built",
+            f"Your export of {export.name} was built: {_describe(export)}",
+            obj=export,
+            visible=True,
+            data={"format": export.format, "qsos": count, "size": size},
+        )
         _notify_ready(export)
     return export
 
@@ -201,6 +217,21 @@ def export_failed(export_id, error: Exception | str, *, final: bool) -> None:
             export.status = ExportStatus.PENDING
         export.save()
         if final:
+            summary = f"Your export of {export.name} couldn't be built"
+        else:
+            summary = (
+                f"Building your export of {export.name} went wrong, it will "
+                "be tried again"
+            )
+        record(
+            export.owner_id,
+            "export.failed" if final else "export.retrying",
+            summary,
+            obj=export,
+            visible=True,
+            data={"format": export.format, "attempts": export.attempts},
+        )
+        if final:
             _notify_failed(export)
 
 
@@ -208,17 +239,20 @@ def download_path(export) -> str:
     return reverse("logbook:export-download", args=[export.pk])
 
 
+def _describe(export) -> str:
+    plural = "" if export.qso_count == 1 else "s"
+    return f"{export.qso_count} QSO{plural} as {export.get_format_display()}"
+
+
 def _notify_ready(export) -> None:
     from apps.notifications.services import notify
 
-    plural = "" if export.qso_count == 1 else "s"
     notify(
         export.owner,
         "export.ready",
         f"Your export of {export.name} is ready",
         body=(
-            f"{export.qso_count} QSO{plural} as {export.get_format_display()}"
-            f", ready to download until "
+            f"{_describe(export)}, ready to download until "
             f"{export.expires_at:%Y-%m-%d %H:%M} UTC."
         ),
         url=download_path(export),
@@ -252,14 +286,28 @@ def tidy_exports(now=None) -> dict[str, int]:
             export.delete_file()
             export.status = ExportStatus.EXPIRED
             export.save(update_fields=["file", "status"])
+            record(
+                export.owner_id,
+                "export.expired",
+                f"Your export of {export.name} expired and was removed",
+                obj=export,
+                visible=True,
+            )
         expired += 1
     stale = now - settings.EXPORT_STALE_AFTER
     stuck = Export.objects.filter(
         Q(status=ExportStatus.PENDING, created_at__lte=stale)
         | Q(status=ExportStatus.RUNNING, started_at__lte=stale)
-    ).values_list("pk", flat=True)
+    ).only("pk", "owner_id", "status")
     requeued = 0
-    for export_id in stuck:
-        _queue(export_id)
+    for export in stuck:
+        record(
+            export.owner_id,
+            "export.requeued",
+            "Not built in time, queued again",
+            obj=export,
+            data={"status": export.status},
+        )
+        _queue(export.pk)
         requeued += 1
     return {"expired": expired, "requeued": requeued}

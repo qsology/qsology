@@ -1,0 +1,10 @@
+# An example of a cluster's own repository, which Flux is bootstrapped
+# from. Copy this directory into a private repo as clusters/<name>/ (see
+# deploy/README.md); flux bootstrap adds flux-system/ next to it
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-system
+  - cluster-settings.yaml
+  - qsology.yaml
+  - image-automation.yaml

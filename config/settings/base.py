@@ -1,7 +1,10 @@
+import ssl
 from datetime import timedelta
 from pathlib import Path
 
 from environs import Env
+
+from config import cache
 
 # Django base dir
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -17,6 +20,7 @@ SECRET_KEY = env.str("DJANGO_SECRET_KEY")
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 # Allowed hosts
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost"])
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 # Root URL Paterns
 ROOT_URLCONF = "config.urls"
 # SGI's
@@ -65,6 +69,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Middleware
 MIDDLEWARE = [
+    # First, so probes are answered whatever Host they're sent with
+    "config.health.HealthCheckMiddleware",
+    # Next, so it counts everything but the probes
+    "config.metrics.MetricsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -91,7 +99,16 @@ STORAGES = {
 }
 # Databases
 DATABASES = {
-    "default": env.dj_db_url("DJANGO_DATABASE_URL"),
+    "default": env.dj_db_url(
+        "DJANGO_DATABASE_URL",
+        conn_max_age=env.int("DJANGO_DATABASE_CONN_MAX_AGE", default=0),
+        conn_health_checks=True,
+    ),
+}
+
+# Cache, e.g. redis://user:password@valkey:6379/1, in memory if not given
+CACHES = {
+    "default": cache.from_url(env.str("DJANGO_CACHE_URL", default="locmem://")),
 }
 
 # Apps
@@ -114,6 +131,7 @@ LOCAL_APPS = [
     "apps.qrz",
     "apps.logbook",
     "apps.notifications",
+    "apps.audit",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -150,12 +168,47 @@ ACCOUNT_DELETION_GRACE_PERIOD = timedelta(
     days=env.int("DJANGO_ACCOUNT_DELETION_GRACE_DAYS", default=30)
 )
 
-# Celery
+# Celery, with a RabbitMQ cluster as the broker. Point it at an address
+# that only leads to nodes that are up (a Kubernetes Service, a load
+# balancer), and reconnecting after losing a node lands on another.
+# Several URLs separated by ; also work, but celery only moves past one
+# that's down for its main connection: remote control and the worker's
+# start-up reach for the first URL and give up if it times out
 CELERY_BROKER_URL = env.str(
-    "CELERY_BROKER_URL", default="redis://localhost:6379/0"
+    "CELERY_BROKER_URL", default="amqp://guest:guest@localhost:5672//"
 )
+# TLS to the broker: check its certificate against CELERY_BROKER_CA_FILE
+# (the system's CAs if unset) and its hostname. server_hostname=None makes
+# kombu use the URL's host. Only for amqps://, so local RabbitMQ stays plain
+if CELERY_BROKER_URL.startswith("amqps://"):
+    CELERY_BROKER_USE_SSL = {
+        "cert_reqs": ssl.CERT_REQUIRED,
+        "ca_certs": env.str("CELERY_BROKER_CA_FILE", default=None),
+        "server_hostname": None,
+    }
+# Quorum queues are replicated across the cluster, so a queued task
+# survives losing a node (a majority of nodes has to be up). Delayed tasks
+# (countdown, eta, retries) use RabbitMQ's native delayed delivery, which
+# celery sets up when it sees quorum queues. It needs a topic exchange,
+# otherwise the worker holds a delayed task in memory until it's due
+CELERY_TASK_DEFAULT_QUEUE_TYPE = "quorum"
+CELERY_TASK_CREATE_MISSING_QUEUE_TYPE = "quorum"
+CELERY_TASK_DEFAULT_EXCHANGE_TYPE = "topic"
+# A task isn't sent until the cluster has confirmed it has it
+CELERY_BROKER_TRANSPORT_OPTIONS = {"confirm_publish": True}
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# Workers take one task at a time, so a long export doesn't hold back
+# tasks another worker could be running
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# RabbitMQ 4 deprecates transient queues that aren't exclusive, which is
+# what celery's remote control and event queues are by default
+CELERY_CONTROL_QUEUE_EXCLUSIVE = True
+CELERY_EVENT_QUEUE_EXCLUSIVE = True
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+# Task events, which celery-exporter turns into metrics
+CELERY_WORKER_SEND_TASK_EVENTS = True
+CELERY_TASK_SEND_SENT_EVENT = True
 CELERY_BEAT_SCHEDULE = {
     "delete-scheduled-users": {
         "task": "apps.accounts.tasks.delete_scheduled_users",
@@ -169,7 +222,15 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.logbook.tasks.tidy_exports",
         "schedule": timedelta(minutes=15),
     },
+    "tidy-task-runs": {
+        "task": "apps.audit.tasks.tidy_task_runs",
+        "schedule": timedelta(hours=24),
+    },
 }
+# How long the record of each background task run is kept, see apps.audit
+TASK_AUDIT_RETENTION = timedelta(
+    days=env.int("QSOLOGY_TASK_AUDIT_RETENTION_DAYS", 365)
+)
 
 # Outbound HTTP, external services ask that we identify ourselves
 HTTP_USER_AGENT = env.str(
@@ -272,3 +333,30 @@ NOTIFICATION_CHANNELS = {
 NOTIFICATION_DEFAULT_CHANNELS = env.list(
     "QSOLOGY_NOTIFICATION_CHANNELS", default=["log"]
 )
+
+# Logging to stdout for the container runtime to collect, with the trace and
+# span ids so logs can be matched up with traces
+LOG_LEVEL = env.str("DJANGO_LOG_LEVEL", default="INFO")
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "trace": {"()": "config.logging.TraceContextFilter"},
+    },
+    "formatters": {
+        "plain": {
+            "format": (
+                "%(asctime)s %(levelname)s %(name)s "
+                "[trace=%(otelTraceID)s span=%(otelSpanID)s] %(message)s"
+            ),
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "plain",
+            "filters": ["trace"],
+        },
+    },
+    "root": {"handlers": ["console"], "level": LOG_LEVEL},
+}

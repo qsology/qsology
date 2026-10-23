@@ -1,0 +1,7 @@
+# The class qsology's Gateway uses, handled by this Envoy Gateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ${GATEWAY_CLASS}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
