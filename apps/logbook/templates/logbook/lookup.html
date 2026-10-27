@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ lookup.call|default:"Look up a callsign" }}{% endblock %}
+{% block content %}
+<h1>Look up a callsign</h1>
+<form method="get" class="narrow">
+  <label for="lookup-call">Callsign</label>
+  <input type="text" name="call" id="lookup-call" value="{{ lookup.call }}" autocapitalize="characters" spellcheck="false">
+  <button type="submit">Look up</button>
+</form>
+{% include "logbook/_lookup.html" %}
+{% if lookup.call %}<p><a href="{% url 'logbook:qso-list' %}?q={{ lookup.call|urlencode }}">QSOs with {{ lookup.call }}</a></p>{% endif %}
+{% endblock %}

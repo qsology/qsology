@@ -1,5 +1,7 @@
 # qsology
 
+An amateur radio log. The web interface's rules (accessibility, never losing a QSO, the API) are in [docs/web.md](docs/web.md).
+
 ## Licence
 ### Why This Project Uses the AGPLv3?
 

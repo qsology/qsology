@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Log{% endblock %}
+{% block head %}<script type="module" src="{% static 'js/log.js' %}"></script>{% endblock %}
+{% block content %}
+<h1>Log</h1>
+{% if unsent %}
+<div class="message warning" role="alert">
+  <p>This QSO was sent after you'd been signed out, so it hasn't been logged yet. Check it and press Log QSO.{% if unsent_count > 1 %} There {% if unsent_count == 2 %}is 1 more{% else %}are {{ unsent_count|add:"-1" }} more{% endif %} after it.{% endif %}</p>
+  <form method="post" action="{% url 'logbook:log' %}" class="inline">
+    {% csrf_token %}<input type="hidden" name="uuid" value="{{ unsent.uuid }}">
+    <button type="submit" name="action" value="discard-unsent" class="secondary small">Throw this QSO away</button>
+  </form>
+</div>
+{% endif %}
+{# Filled in by log.js with QSOs this browser hasn't been able to send yet #}
+<section id="outbox" class="outbox" hidden data-adif="{{ adif_names }}" data-login="{% url 'accounts:login' %}"></section>
+{% include "includes/form_errors.html" %}
+{% include "logbook/_warnings.html" %}
+<form method="post" action="{% url 'logbook:log' %}" id="qso-entry" class="qso-entry" data-recent="recent-qsos">
+  {% csrf_token %}{{ form.uuid }}{{ form.shown }}
+  {% include "logbook/_qso_fields.html" %}
+  {% if warnings %}{{ form.accept_warnings.as_field_group }}{% endif %}
+  <div class="actions">
+    <button type="submit">Log QSO</button>
+    <button type="submit" name="action" value="lookup" class="secondary" formnovalidate>Look up callsign</button>
+  </div>
+</form>
+<section id="lookup" class="lookup" aria-live="polite" aria-label="Callsign look up">{% if lookup %}{% include "logbook/_lookup.html" %}{% endif %}</section>
+<section aria-labelledby="recent-title">
+  <h2 id="recent-title">Recent QSOs</h2>
+  <div class="table-scroll">
+  <table class="qsos">
+    <caption class="visually-hidden">The last {{ recent|length }} QSOs logged, newest first</caption>
+    {% include "logbook/_qso_head.html" %}
+    <tbody id="recent-qsos">
+      {% for qso in recent %}{% include "logbook/_qso_row.html" %}{% empty %}<tr class="empty"><td colspan="9">Nothing logged yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p><a href="{% url 'logbook:qso-list' %}">Every QSO</a></p>
+</section>
+{% endblock %}

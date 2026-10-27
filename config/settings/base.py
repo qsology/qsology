@@ -2,6 +2,7 @@ import ssl
 from datetime import timedelta
 from pathlib import Path
 
+from django.utils.csp import CSP
 from environs import Env
 
 from config import cache
@@ -38,6 +39,8 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "django.template.context_processors.csp",
+                "apps.web.context_processors.preferences",
             ],
         },
     },
@@ -75,6 +78,11 @@ MIDDLEWARE = [
     "config.metrics.MetricsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Pages compressed for slow connections. Django masks the CSRF token
+    # differently in every response, which is what BREACH needs to be
+    # the same
+    "django.middleware.gzip.GZipMiddleware",
+    "django.middleware.csp.ContentSecurityPolicyMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -87,6 +95,34 @@ MIDDLEWARE = [
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
 ]
+
+FORM_RENDERER = "apps.web.forms.Renderer"
+
+LOGIN_URL = "accounts:login"
+LOGIN_REDIRECT_URL = "web:home"
+LOGOUT_REDIRECT_URL = "web:home"
+# A form sent with a stale CSRF token (after signing in again in another
+# tab, say) is shown again to send, rather than lost
+CSRF_FAILURE_VIEW = "apps.web.views.csrf_failure"
+
+# Only the app's own files: no inline scripts or styles, nothing from
+# elsewhere. See docs/web.md
+SECURE_CSP = {
+    "default-src": [CSP.SELF],
+    "script-src": [CSP.SELF],
+    "style-src": [CSP.SELF],
+    "img-src": [CSP.SELF, "data:"],
+    "connect-src": [CSP.SELF],
+    "font-src": [CSP.SELF],
+    "form-action": [CSP.SELF],
+    "frame-ancestors": [CSP.NONE],
+    "base-uri": [CSP.NONE],
+    "object-src": [CSP.NONE],
+}
+
+# Imports are read in the request, this keeps one from tying up a worker
+# for long. ADIF is about 300 bytes a QSO, so this is ~65,000 QSOs
+IMPORT_MAX_BYTES = env.int("QSOLOGY_IMPORT_MAX_BYTES", default=20 * 1024 * 1024)
 
 # Storages config
 STORAGES = {
@@ -120,11 +156,14 @@ DJANGO_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.sites",
+    # Its widget templates, for the form renderer (FORM_RENDERER)
+    "django.forms",
 ]
 
 THIRD_PARTY_APPS = []
 
 LOCAL_APPS = [
+    "apps.web",
     "apps.accounts",
     "apps.callsigns",
     "apps.locations",

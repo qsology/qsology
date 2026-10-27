@@ -1,0 +1,21 @@
+{% comment %}
+While an export is being made its row asks for itself again every 10
+seconds (htmx), until it's ready. Without scripts, the check again link
+reloads the page
+{% endcomment %}
+<tr id="export-{{ export.pk }}"{% if export.status == "pending" or export.status == "running" %} hx-get="{% url 'logbook:export' export.pk %}" hx-trigger="every 10s" hx-swap="outerHTML"{% endif %}>
+  <td>{{ export.created_at|date:"Y-m-d H:i" }}</td>
+  <th scope="row">{{ export.name }}, {{ export.get_format_display }}</th>
+  <td>{{ export.qso_count|default_if_none:"" }}</td>
+  <td>
+    {% if export.is_downloadable %}
+    <a href="{% url 'logbook:export-download' export.pk %}" download>Download<span class="visually-hidden"> {{ export.name }}, {{ export.get_format_display }}</span></a>{% if export.size %} <small>({{ export.size|filesizeformat }})</small>{% endif %}
+    {% elif export.status == "pending" or export.status == "running" %}
+    {{ export.get_status_display }}… <a href="{% url 'logbook:export-list' %}" class="check-again">Check again</a>
+    {% elif export.status == "failed" %}
+    It couldn't be made. Try again, and if it fails again let us know.
+    {% else %}
+    {{ export.get_status_display }}
+    {% endif %}
+  </td>
+</tr>

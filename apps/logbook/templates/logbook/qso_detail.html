@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ qso.call }} {{ qso.time_on|date:"Y-m-d H:i" }}{% endblock %}
+{% block content %}
+<h1>{{ qso.call }} <small>{{ qso.time_on|date:"Y-m-d H:i" }} UTC</small></h1>
+<p><a href="{% url 'logbook:qso-list' %}">Back to the QSOs</a></p>
+{% if qso.is_deleted %}
+<div class="message warning" role="status">
+  <p>This QSO was deleted on {{ qso.deleted_at|date:"Y-m-d H:i" }}. It isn't in your log or exports until it's brought back.</p>
+  <form method="post" action="{% url 'logbook:qso-restore' qso.uuid %}" class="inline">{% csrf_token %}<button type="submit">Bring it back</button></form>
+</div>
+{% endif %}
+{% if qso.review_status == "needs_review" and not qso.is_deleted %}
+<div class="message warning" role="status">
+  <p>Logged with warnings, to check:</p>
+  <ul>{% for issue in qso.issue_list %}<li>{{ issue.message }}</li>{% endfor %}</ul>
+  <p>Change it below, or if it's right as it is:</p>
+  <form method="post" action="{% url 'logbook:qso-review' qso.uuid %}" class="inline">{% csrf_token %}<button type="submit" class="secondary">It's right, I've checked it</button></form>
+</div>
+{% endif %}
+{% if conflict %}
+<div class="message error" role="alert">
+  <p>This QSO was changed somewhere else while you were changing it, so your changes weren't saved. They're still in the form below. The other changes are now saved; check the form and save again to replace them with yours.</p>
+</div>
+{% endif %}
+{% if not qso.is_deleted %}
+{% include "includes/form_errors.html" %}
+{% include "logbook/_warnings.html" %}
+<form method="post" class="qso-entry">
+  {% csrf_token %}{{ form.shown }}<input type="hidden" name="version" value="{{ qso.version }}">
+  {% include "logbook/_qso_fields.html" %}
+  {% if warnings %}{{ form.accept_warnings.as_field_group }}{% endif %}
+  <div class="actions">
+    <button type="submit">Save changes</button>
+    <a href="{% url 'logbook:qso-delete' qso.uuid %}">Delete this QSO</a>
+  </div>
+</form>
+{% endif %}
+{% if revisions %}
+<section aria-labelledby="history-title">
+  <h2 id="history-title">Changes</h2>
+  <div class="table-scroll">
+  <table>
+    <caption class="visually-hidden">Every change to this QSO, newest first</caption>
+    <thead><tr><th scope="col">Version</th><th scope="col">When</th><th scope="col">What</th><th scope="col">Why</th></tr></thead>
+    <tbody>{% for revision in revisions %}<tr><th scope="row">{{ revision.version }}</th><td>{{ revision.created_at|date:"Y-m-d H:i" }}</td><td>{{ revision.get_action_display }}</td><td>{{ revision.reason }}</td></tr>{% endfor %}</tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

@@ -25,12 +25,15 @@ dependencies = [
     "opentelemetry-instrumentation-botocore>=0.66b1",
     "opentelemetry-instrumentation-logging>=0.66b1",
     "prometheus-client>=0.23",
+    "django-ninja>=1.7.1,<1.8",
 ]
 
 [dependency-groups]
 dev = [
+    "beautifulsoup4>=4.15",
     "hypothesis>=6",
     "moto[s3]>=5",
+    "playwright>=1.63,<1.64",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-django>=4.14.0",
@@ -59,9 +62,20 @@ select = [ "E", "W", "F", "I", "UP", "B", "DJ", "C4", "SIM", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 # Migrations are auto generated, so we're going to ignore them
 "**/migrations/*.py" = ["E501", "RUF012"]
+# Django's Meta options (fields, labels, widgets) are plain class attributes
+"**/forms.py" = ["RUF012"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py", "*_test.py", "tests.py"]
 addopts = "--strict-markers --reuse-db"
+markers = [
+    "browser: runs in real browsers (tests/browser), needs task test:browsers",
+]
 testpaths = ["apps", "tests"]
+
+[tool.uv]
+# Hold back releases less than two weeks old that dependencies would pull in
+constraint-dependencies = [
+    "soupsieve<3.0.4",
+]

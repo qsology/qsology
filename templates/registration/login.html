@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<article class="narrow">
+  <h1>Sign in</h1>
+  {% include "includes/form_errors.html" %}
+  <form method="post" action="{% url 'accounts:login' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <label for="id_username">Username</label>
+    <input type="text" name="username" id="id_username" autocomplete="username" autocapitalize="none" spellcheck="false" required value="{{ form.username.value|default:'' }}"{% if form.errors %} aria-invalid="true"{% endif %}>
+    <label for="id_password">Password</label>
+    <input type="password" name="password" id="id_password" autocomplete="current-password" required{% if form.errors %} aria-invalid="true"{% endif %}>
+    <button type="submit">Sign in</button>
+  </form>
+  <p><a href="{% url 'accounts:password-reset' %}">Forgotten your password?</a></p>
+</article>
+{% endblock %}

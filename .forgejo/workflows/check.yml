@@ -39,6 +39,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
+      # Chromium and Firefox, with their system libraries, for tests/browser
+      - name: Install browsers
+        run: task test:browsers -- --with-deps
+
       - name: task check
         run: task check
 

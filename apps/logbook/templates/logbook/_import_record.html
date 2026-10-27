@@ -1,0 +1,18 @@
+{% comment %}
+A record from an import that wasn't logged. Logging it swaps this in its
+place (htmx), with focus put back on the element with the button's id
+{% endcomment %}
+<li id="record-{{ record.pk }}" class="import-record" value="{{ record.index|add:1 }}">
+  <p><strong>Record {{ record.index|add:1 }}</strong>: {{ record.get_status_display }}</p>
+  {% if record.status == "logged" %}
+  <p id="record-{{ record.pk }}-action" tabindex="-1">Logged{% if record.qso %}, <a href="{% url 'logbook:qso' record.qso.uuid %}">see the QSO</a>{% endif %}.</p>
+  {% else %}
+  {% if record.issues %}<ul>{% for issue in record.issues %}<li>{{ issue.message }}</li>{% endfor %}</ul>{% endif %}
+  {% if record.error %}<p>{{ record.error }}</p>{% endif %}
+  <details><summary>The record as it was in the file</summary><pre>{{ record.raw }}</pre></details>
+  <form method="post" action="{% url 'logbook:import-record-log' record.batch_id record.pk %}" hx-post="{% url 'logbook:import-record-log' record.batch_id record.pk %}" hx-target="#record-{{ record.pk }}" hx-swap="outerHTML">
+    {% csrf_token %}
+    <button type="submit" id="record-{{ record.pk }}-action" class="secondary small">{% if record.status == "held" %}Log it, marked to check{% else %}Try again{% endif %}<span class="visually-hidden"> (record {{ record.index|add:1 }})</span></button>
+  </form>
+  {% endif %}
+</li>

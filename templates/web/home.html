@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Hello{% if user.display_name %}, {{ user.display_name }}{% endif %}</h1>
+<p><a href="{% url 'logbook:log' %}" role="button">Log a QSO</a></p>
+<p>{{ qso_count }} QSO{{ qso_count|pluralize }} in your log{% if needs_review %}, <a href="{% url 'logbook:qso-list' %}?filter=review:needs_review">{{ needs_review }} to check</a>{% endif %}.</p>
+{% if recent %}
+<h2>Latest QSOs</h2>
+<div class="table-scroll">
+<table class="qsos">
+  <caption class="visually-hidden">Your latest QSOs</caption>
+  {% include "logbook/_qso_head.html" %}
+  <tbody>{% for qso in recent %}{% include "logbook/_qso_row.html" %}{% endfor %}</tbody>
+</table>
+</div>
+{% endif %}
+{% if activity %}
+<h2>Recent activity</h2>
+<ul>{% for entry in activity %}<li>{{ entry.created_at|date:"Y-m-d H:i" }}: {{ entry.summary }}</li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}

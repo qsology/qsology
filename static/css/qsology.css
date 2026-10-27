@@ -1,0 +1,298 @@
+/* qsology's own styles, on top of Pico. Colours come from Pico's variables
+   so they follow the light and dark themes. Keep this small, see
+   docs/web.md */
+
+/* Hidden, but still read out */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -10rem;
+  z-index: 10;
+  padding: 0.5rem 1rem;
+  background: var(--pico-background-color);
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
+main:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 3px solid var(--pico-primary-focus, currentColor);
+  outline-offset: 2px;
+}
+
+/* Things only the page's scripts use */
+.js-only {
+  display: none;
+}
+html.js .js-only {
+  display: revert;
+}
+
+/* htmx's own indicator styles are turned off (they'd be an inline style,
+   which the CSP doesn't allow) */
+.htmx-indicator {
+  visibility: hidden;
+}
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  visibility: visible;
+}
+
+/* A button that reads as a link, for actions that must be POSTs */
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--pico-primary);
+  text-decoration: underline;
+  width: auto;
+  margin: 0;
+  font-size: inherit;
+}
+form.inline {
+  display: inline;
+  margin: 0;
+}
+button.small,
+[role="button"].small {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.875rem;
+  width: auto;
+}
+
+.narrow {
+  max-width: 40rem;
+}
+
+.required {
+  font-weight: normal;
+  color: var(--pico-muted-color);
+  font-size: 0.875em;
+}
+
+/* Errors and messages say what they are in words, colour only helps */
+.messages .message,
+.message,
+.form-errors,
+.warnings {
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border-left: 0.3rem solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color);
+}
+.message.success {
+  border-color: var(--pico-ins-color);
+}
+.message.error,
+.form-errors {
+  border-color: var(--pico-del-color);
+}
+.message.warning,
+.warnings {
+  border-color: #c58b00;
+}
+.message p:last-child,
+.form-errors ul,
+.warnings p:last-child {
+  margin-bottom: 0;
+}
+ul.errorlist {
+  margin: 0 0 var(--pico-spacing);
+  padding: 0;
+  list-style: none;
+  color: var(--pico-del-color);
+  font-size: 0.875em;
+}
+ul.errorlist li {
+  list-style: none;
+}
+
+/* The menu wraps onto more lines on a narrow screen, rather than running
+   off the side */
+header nav,
+header nav ul {
+  flex-wrap: wrap;
+}
+header nav ul:last-child {
+  margin-right: 0;
+}
+
+.lookup {
+  margin-top: 1rem;
+}
+
+.mode-switch p,
+.theme-switch {
+  margin: 0;
+}
+.theme-switch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.theme-switch select,
+.theme-switch button {
+  width: auto;
+  margin: 0;
+}
+footer {
+  margin-top: 2rem;
+}
+
+.subnav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0;
+}
+.subnav li {
+  list-style: none;
+}
+
+/* Tables scroll sideways on a narrow screen rather than squash */
+.table-scroll {
+  overflow-x: auto;
+}
+table.qsos td,
+table.qsos th {
+  padding: 0.35rem 0.5rem;
+  white-space: nowrap;
+}
+
+/* The QSO form: compact, fields side by side where there's room */
+.qso-entry {
+  --pico-form-element-spacing-vertical: 0.4rem;
+  --pico-form-element-spacing-horizontal: 0.5rem;
+}
+.qso-group {
+  margin-bottom: 0.5rem;
+}
+.qso-group legend {
+  font-weight: bold;
+  font-size: 0.9rem;
+}
+.qso-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+}
+/* Fields are about as wide as what goes in them, and only free text
+   grows to fill the line */
+.qso-fields .f {
+  flex: 0 1 10rem;
+}
+.qso-fields .f-call,
+.qso-fields .f-name,
+.qso-fields .f-station_callsign {
+  flex: 0 1 12rem;
+}
+.qso-fields .f-rst_sent,
+.qso-fields .f-rst_rcvd,
+.qso-fields .f-mode,
+.qso-fields .f-time,
+.qso-fields .f-end_time {
+  flex: 0 1 7rem;
+}
+.qso-fields .f-band {
+  flex: 0 1 12rem;
+}
+.qso-fields .f-comment,
+.qso-fields .f-notes,
+.qso-fields .f-qth {
+  flex: 1 1 14rem;
+}
+.qso-entry .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+.qso-entry .actions button {
+  width: auto;
+  margin: 0;
+}
+
+/* QSOs this browser is still to send */
+.outbox {
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border: 2px solid #c58b00;
+}
+.outbox ol {
+  margin-bottom: 0.5rem;
+}
+.outbox .qso-problem ul {
+  margin: 0.25rem 0;
+}
+.outbox .item-actions button {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+tr.pending td,
+tr.pending th {
+  color: var(--pico-muted-color);
+}
+
+.lookup-result {
+  padding: 0.5rem 1rem;
+  border-left: 0.3rem solid var(--pico-primary-border, currentColor);
+  margin-bottom: 1rem;
+}
+.lookup-result h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+}
+.lookup-result p {
+  margin-bottom: 0.25rem;
+}
+
+.pagination ul {
+  display: flex;
+  gap: 1rem;
+  padding: 0;
+}
+.pagination li {
+  list-style: none;
+}
+
+dl.counts {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 0.25rem 1rem;
+}
+dl.counts dd {
+  margin: 0;
+}
+.import-records > li {
+  margin-bottom: 1rem;
+}
+.import-records pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media print {
+  header nav,
+  footer,
+  .skip-link,
+  .qso-entry,
+  .outbox {
+    display: none;
+  }
+}

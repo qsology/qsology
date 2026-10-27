@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}QRZ.com lookups{% endblock %}
+{% block content %}
+<h1>QRZ.com lookups</h1>
+{% include "accounts/_nav.html" %}
+<p>With a QRZ.com XML subscription, the log looks up each callsign you enter and fills in their name, QTH and grid square.</p>
+{% if credential.last_error %}<p class="message error" role="alert">The last lookup failed: {{ credential.last_error }}</p>{% endif %}
+{% include "includes/form_errors.html" %}
+<form method="post" class="narrow">
+  {% csrf_token %}
+  {{ form.username.as_field_group }}
+  {{ form.password.as_field_group }}
+  {{ form.is_enabled.as_field_group }}
+  <button type="submit">Save</button>
+</form>
+{% if credential %}
+<form method="post" action="{% url 'accounts:qrz-delete' %}" class="narrow">
+  {% csrf_token %}
+  <button type="submit" class="secondary">Remove my QRZ.com login</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,12 @@
+{% comment %}
+Why a QSO sent by the page's script couldn't be logged
+{% endcomment %}
+<div class="qso-problem"{% if warnings and not form.errors %} data-warnings{% endif %}>
+  {% if form.errors %}
+  <ul>
+    {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+    {% for field in form.visible_fields %}{% for error in field.errors %}<li>{{ field.label }}: {{ error }}</li>{% endfor %}{% endfor %}
+  </ul>
+  {% endif %}
+  {% if warnings %}<ul>{% for issue in warnings %}<li>{{ issue.message }}</li>{% endfor %}</ul>{% endif %}
+</div>

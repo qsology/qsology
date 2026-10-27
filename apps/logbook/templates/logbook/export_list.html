@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Export{% endblock %}
+{% block content %}
+<h1>Export your log</h1>
+<p>Exports are made in the background, and kept for {{ retention_days }} day{{ retention_days|pluralize }} to download. You'll find them listed below.</p>
+{% include "includes/form_errors.html" %}
+<form method="post" class="narrow">
+  {% csrf_token %}
+  {{ form.format.as_field_group }}
+  {% if form.logbook %}{{ form.logbook.as_field_group }}{% endif %}
+  <button type="submit">Make export</button>
+</form>
+<h2>Your exports</h2>
+{% if exports %}
+<div class="table-scroll">
+<table>
+  <caption class="visually-hidden">Your exports, newest first</caption>
+  <thead><tr><th scope="col">Asked for</th><th scope="col">What</th><th scope="col">QSOs</th><th scope="col">Status</th></tr></thead>
+  <tbody>{% for export in exports %}{% include "logbook/_export_row.html" %}{% endfor %}</tbody>
+</table>
+</div>
+{% else %}
+<p>You haven't made any exports.</p>
+{% endif %}
+{% endblock %}

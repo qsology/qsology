@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Export {{ export.name }}{% endblock %}
+{% block content %}
+<h1>{{ export.name }}, {{ export.get_format_display }}</h1>
+<div class="table-scroll">
+<table>
+  <caption class="visually-hidden">The export</caption>
+  <thead><tr><th scope="col">Asked for</th><th scope="col">What</th><th scope="col">QSOs</th><th scope="col">Status</th></tr></thead>
+  <tbody>{% include "logbook/_export_row.html" %}</tbody>
+</table>
+</div>
+<p><a href="{% url 'logbook:export-list' %}">Every export</a></p>
+{% endblock %}

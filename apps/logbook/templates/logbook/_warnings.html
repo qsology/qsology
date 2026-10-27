@@ -1,0 +1,7 @@
+{% if warnings %}
+<div class="warnings" role="alert" aria-labelledby="warnings-title">
+  <p id="warnings-title"><strong>Check {% if warnings|length == 1 %}this{% else %}these{% endif %} before logging</strong></p>
+  <ul>{% for issue in warnings %}<li>{% if issue.field %}<a href="#id_{{ issue.field }}">{{ issue.message }}</a>{% else %}{{ issue.message }}{% endif %}</li>{% endfor %}</ul>
+  <p>Fix {% if warnings|length == 1 %}it{% else %}them{% endif %}, or tick “Log it anyway” and it'll be logged, marked for you to check later.</p>
+</div>
+{% endif %}

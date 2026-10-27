@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Import{% endblock %}
+{% block content %}
+<h1>Import QSOs</h1>
+<p>Import an ADIF file saved by another logging program. Nothing in it is lost: every QSO is logged, or kept for you to look at if it has a problem. QSOs already in your log aren't logged twice.</p>
+{% include "includes/form_errors.html" %}
+<form method="post" enctype="multipart/form-data" class="narrow">
+  {% csrf_token %}
+  {{ form.file.as_field_group }}
+  {{ form.accept_warnings.as_field_group }}
+  <button type="submit">Import</button>
+</form>
+<h2>Your imports</h2>
+{% if batches %}
+<div class="table-scroll">
+<table>
+  <caption class="visually-hidden">Your imports, newest first</caption>
+  <thead><tr><th scope="col">File</th><th scope="col">Imported</th><th scope="col">Records</th><th scope="col">Logged</th><th scope="col">Already logged</th><th scope="col">To look at</th></tr></thead>
+  <tbody>
+  {% for batch in batches %}
+  <tr>
+    <th scope="row"><a href="{% url 'logbook:import' batch.pk %}">{{ batch.filename|default:batch.get_format_display }}</a></th>
+    <td>{{ batch.created_at|date:"Y-m-d H:i" }}</td>
+    <td>{{ batch.total }}</td>
+    <td>{{ batch.logged }}</td>
+    <td>{{ batch.duplicates }}</td>
+    <td>{{ batch.held|add:batch.failed }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p>You haven't imported anything.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,11 @@
+<tr id="qso-{{ qso.uuid }}"{% if already %} data-already{% endif %}>
+  <td>{{ qso.time_on|date:"Y-m-d" }}</td>
+  <td>{{ qso.time_on|date:"H:i" }}</td>
+  <th scope="row"><a href="{% url 'logbook:qso' qso.uuid %}">{{ qso.call }}</a></th>
+  <td>{{ qso.band }}</td>
+  <td>{{ qso.mode }}</td>
+  <td>{{ qso.rst_sent }}</td>
+  <td>{{ qso.rst_rcvd }}</td>
+  <td>{{ qso.name }}</td>
+  <td>{% if qso.is_deleted %}Deleted{% elif qso.review_status == "needs_review" %}To check{% elif already %}Already logged{% endif %}</td>
+</tr>

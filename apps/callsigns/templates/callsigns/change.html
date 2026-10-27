@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ allocation.callsign }}{% endblock %}
+{% block content %}
+<h1>{{ allocation.callsign }}</h1>
+<p>Held from {{ allocation.valid_from|date:"Y-m-d" }}.</p>
+{% include "includes/form_errors.html" %}
+<form method="post" class="narrow">
+  {% csrf_token %}
+  {{ form.valid_until.as_field_group }}
+  {{ form.is_primary.as_field_group }}
+  <button type="submit">Save</button>
+  <a href="{% url 'callsigns:list' %}">Cancel</a>
+</form>
+{% if allocation.is_active %}
+<form method="post" action="{% url 'callsigns:end' allocation.pk %}" class="narrow">
+  {% csrf_token %}
+  <p>If you no longer hold {{ allocation.callsign }}, end it now. QSOs already logged with it stay yours.</p>
+  <button type="submit" class="secondary">I no longer hold {{ allocation.callsign }}</button>
+</form>
+{% endif %}
+{% endblock %}

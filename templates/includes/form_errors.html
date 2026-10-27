@@ -1,0 +1,14 @@
+{% comment %}
+What's wrong with the form, at the top so it's found first. Each links to
+its field
+{% endcomment %}
+{% if form.errors %}
+<div class="form-errors" role="alert" aria-labelledby="{{ form.prefix|default:'form' }}-errors-title">
+  <p id="{{ form.prefix|default:'form' }}-errors-title"><strong>{% if form.errors|length == 1 %}There's a problem{% else %}There are {{ form.errors|length }} problems{% endif %} with what was entered</strong></p>
+  <ul>
+    {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+    {% for field in form.visible_fields %}{% for error in field.errors %}<li><a href="#{{ field.auto_id }}">{{ field.label }}: {{ error }}</a></li>{% endfor %}{% endfor %}
+    {% for field in form.hidden_fields %}{% for error in field.errors %}<li>{{ error }}</li>{% endfor %}{% endfor %}
+  </ul>
+</div>
+{% endif %}

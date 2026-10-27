@@ -1,0 +1,17 @@
+{
+  "_comment": "Third party files served from here, never a CDN. Each is the file as published, checked by tests/web/test_static.py. To update one: download the package from npm, copy the file in under its new version, update this and the {% static %} names, and check the release is at least two weeks old. See docs/web.md",
+  "htmx-4.0.0.esm.min.js": {
+    "package": "htmx.org",
+    "version": "4.0.0",
+    "file": "dist/htmx.esm.min.js",
+    "licence": "0BSD",
+    "sha256": "563934753b60d8b8d69ccdb453be65f872c97b32e72552c36e5827980cb34b97"
+  },
+  "pico-2.1.1.min.css": {
+    "package": "@picocss/pico",
+    "version": "2.1.1",
+    "file": "css/pico.min.css",
+    "licence": "MIT",
+    "sha256": "fbc9a63fc9fc9f72d12fd7fc9806e11fa9f77ae4f9cad146b27003a1119ba3db"
+  }
+}

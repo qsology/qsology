@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Your amateur radio log{% endblock %}
+{% block content %}
+<h1>qsology</h1>
+<p class="lead">An amateur radio log that's quick to use, works on a slow connection, and never loses a QSO.</p>
+<ul>
+  <li>Log contacts the way you're used to: type the callsign, the report and press Enter.</li>
+  <li>Import your existing log from any program that saves ADIF, and export it again whenever you like.</li>
+  <li>Works with a screen reader, a keyboard, without JavaScript and over a poor mobile signal.</li>
+  <li>Logging programs and scripts can do everything through the API.</li>
+</ul>
+<p><a href="{% url 'accounts:login' %}" role="button">Sign in</a></p>
+{% endblock %}

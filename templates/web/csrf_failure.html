@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Send that again{% endblock %}
+{% block content %}
+<h1>That couldn't be sent</h1>
+{% if fields %}
+<p>The page was loaded before you last signed in, so it couldn't be checked. Here's what was in it. If it's what you entered, send it again.</p>
+<dl class="resend">{% for name, value in fields %}{% if value %}<dt>{{ name }}</dt><dd>{{ value }}</dd>{% endif %}{% endfor %}</dl>
+<form method="post" action="{{ action }}">
+  {% csrf_token %}
+  {% for name, value in fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+  <button type="submit">Send it again</button>
+</form>
+{% else %}
+<p>The page was loaded before you last signed in, or has been open a long time, so it couldn't be checked.{% if had_file %} Choose the file again and resend it.{% endif %} Press your browser's back button: what you entered should still be there, and you can send it again.</p>
+{% endif %}
+{% endblock %}

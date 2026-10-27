@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}QSOs{% endblock %}
+{% block content %}
+<h1>QSOs</h1>
+{% if needs_review %}<p><a href="?filter=review:needs_review">{{ needs_review }} QSO{{ needs_review|pluralize }} to check</a>, logged with warnings.</p>{% endif %}
+<form method="get" class="search" role="search" aria-label="QSOs">
+  <div class="grid">
+    <div>{{ form.q.as_field_group }}</div>
+    {% if advanced %}<div>{{ form.filter.as_field_group }}</div>{% elif form.filter.value %}<input type="hidden" name="filter" value="{{ form.filter.value }}">{% endif %}
+  </div>
+  {% if advanced %}{{ form.deleted.as_field_group }}{% endif %}
+  <button type="submit">Search</button>
+  {% if request.GET %}<a href="{% url 'logbook:qso-list' %}">Show every QSO</a>{% endif %}
+</form>
+{% if form.filter.value and not advanced %}<p>Only showing QSOs matching <code>{{ form.filter.value }}</code>. <a href="{% url 'logbook:qso-list' %}">Show every QSO</a></p>{% endif %}
+<p>{{ page.paginator.count }} QSO{{ page.paginator.count|pluralize }}{% if page.paginator.num_pages > 1 %}, page {{ page.number }} of {{ page.paginator.num_pages }}{% endif %}.</p>
+{% if page.object_list %}
+<div class="table-scroll">
+<table class="qsos">
+  <caption class="visually-hidden">QSOs, newest first</caption>
+  {% include "logbook/_qso_head.html" %}
+  <tbody>{% for qso in page.object_list %}{% include "logbook/_qso_row.html" %}{% endfor %}</tbody>
+</table>
+</div>
+{% include "includes/pagination.html" %}
+{% endif %}
+{% endblock %}

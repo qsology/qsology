@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}API keys{% endblock %}
+{% block content %}
+<h1>API keys</h1>
+{% include "accounts/_nav.html" %}
+<p>Logging programs and scripts use an API key to reach your log. Everything you can do here can be done with one. Give each program its own key, so one can be revoked without stopping the others.</p>
+{% if new_key %}
+<article class="new-key" aria-labelledby="new-key-title">
+  <h2 id="new-key-title">Your new key</h2>
+  <p>Copy it now, it won't be shown again.</p>
+  <label for="new-key">Key</label>
+  <input type="text" id="new-key" value="{{ new_key }}" readonly spellcheck="false">
+</article>
+{% endif %}
+<h2>Make a key</h2>
+{% include "includes/form_errors.html" %}
+<form method="post" class="narrow">
+  {% csrf_token %}
+  {{ form.name.as_field_group }}
+  {{ form.expires.as_field_group }}
+  <button type="submit">Make key</button>
+</form>
+<h2>Your keys</h2>
+{% if keys %}
+<div class="table-scroll">
+<table>
+  <caption class="visually-hidden">Your API keys</caption>
+  <thead><tr><th scope="col">Name</th><th scope="col">Made</th><th scope="col">Last used</th><th scope="col">Stops working</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+  {% for key in keys %}
+  <tr>
+    <th scope="row">{{ key.name }}</th>
+    <td>{{ key.created_at|date:"Y-m-d" }}</td>
+    <td>{{ key.last_used_at|date:"Y-m-d H:i"|default:"Never" }}</td>
+    <td>{% if key.revoked_at %}Revoked {{ key.revoked_at|date:"Y-m-d" }}{% elif key.expires_at %}{{ key.expires_at|date:"Y-m-d" }}{% else %}Never{% endif %}</td>
+    <td>{% if key.is_usable %}
+      <form method="post" action="{% url 'accounts:api-key-revoke' key.pk %}" class="inline">
+        {% csrf_token %}<button type="submit" class="secondary small">Revoke<span class="visually-hidden"> {{ key.name }}</span></button>
+      </form>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p>You haven't made any keys.</p>
+{% endif %}
+{% endblock %}

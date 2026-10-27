@@ -1,0 +1,17 @@
+{% comment %}
+What's known about a callsign. data-fill is what the log's script may put
+into the form's empty fields, for this call only
+{% endcomment %}
+{% if lookup.call %}
+<div class="lookup-result" data-call="{{ lookup.call }}" data-fill="{{ lookup.fill_json }}">
+  <h2>{{ lookup.call }}</h2>
+  {% if lookup.qrz %}
+  <p>{{ lookup.qrz.name }}{% if lookup.fill.qth %}, {{ lookup.fill.qth }}{% endif %}{% if lookup.fill.country %}, {{ lookup.fill.country }}{% endif %}{% if lookup.fill.gridsquare %} ({{ lookup.fill.gridsquare }}){% endif %}</p>
+  {% elif lookup.qrz_message %}<p>{{ lookup.qrz_message }}.</p>{% endif %}
+  {% if lookup.count %}
+  <p>Worked {{ lookup.count }} time{{ lookup.count|pluralize }} before{% if lookup.previous %}, last on {{ lookup.previous.0.time_on|date:"Y-m-d" }}{% if lookup.previous.0.band %} on {{ lookup.previous.0.band }}{% endif %}{% if lookup.previous.0.mode %} {{ lookup.previous.0.mode }}{% endif %}{% endif %}.</p>
+  {% else %}
+  <p>Not worked before.</p>
+  {% endif %}
+</div>
+{% endif %}

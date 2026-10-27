@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Import {{ batch.filename|default:batch.get_format_display }}{% endblock %}
+{% block content %}
+<h1>Import of {{ batch.filename|default:batch.get_format_display }}</h1>
+<p>Imported {{ batch.created_at|date:"Y-m-d H:i" }} UTC.</p>
+<dl class="counts">
+  <dt>Records in the file</dt><dd>{{ batch.total }}</dd>
+  <dt>Logged</dt><dd>{{ batch.logged }}</dd>
+  <dt>Already in your log</dt><dd>{{ batch.duplicates }}</dd>
+  <dt>Held, with warnings</dt><dd>{{ batch.held }}</dd>
+  <dt>Couldn't be read</dt><dd>{{ batch.failed }}</dd>
+</dl>
+{% if page.object_list %}
+<h2>To look at</h2>
+<p>These weren't logged. Held records had warnings: log them as they are, marked for you to check, or fix them in the file and import it again. Records that couldn't be read are shown as they were in the file.</p>
+<ol class="import-records">
+  {% for record in page.object_list %}{% include "logbook/_import_record.html" %}{% endfor %}
+</ol>
+{% include "includes/pagination.html" %}
+{% else %}
+<p>Nothing is waiting to be looked at.</p>
+{% endif %}
+<p><a href="{% url 'logbook:import-list' %}">Every import</a></p>
+{% endblock %}

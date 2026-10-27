@@ -32,5 +32,9 @@ GEOCODER_MIN_INTERVAL = 0
 # Hashing passwords properly is slow and tests make a lot of users
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
-# There's no collected static in tests, don't warn about it on every request
+# There's no collected static in tests, so no manifest of hashed names.
+# Whitenoise serves the files from where they are, for the browser tests
+STORAGES["staticfiles"] = {  # noqa: F405
+    "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+}
 WHITENOISE_AUTOREFRESH = True

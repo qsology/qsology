@@ -402,7 +402,7 @@ class TestDownloading:
     def test_must_be_signed_in(self, client, ready):
         response = client.get(self.url(ready))
         assert response.status_code == 302
-        assert "login" in response["Location"]
+        assert response["Location"].startswith(reverse("accounts:login"))
 
     def test_nobody_else(self, client, other_user, ready):
         client.force_login(other_user)

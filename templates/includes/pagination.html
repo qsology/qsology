@@ -1,0 +1,9 @@
+{% if page.has_other_pages %}
+<nav aria-label="Pages" class="pagination">
+  <ul>
+    {% if page.has_previous %}<li><a href="?{% if query_string %}{{ query_string }}&amp;{% endif %}page={{ page.previous_page_number }}" rel="prev">Newer</a></li>{% endif %}
+    <li aria-current="page">Page {{ page.number }} of {{ page.paginator.num_pages }}</li>
+    {% if page.has_next %}<li><a href="?{% if query_string %}{{ query_string }}&amp;{% endif %}page={{ page.next_page_number }}" rel="next">Older</a></li>{% endif %}
+  </ul>
+</nav>
+{% endif %}

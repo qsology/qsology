@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Delete {{ qso.call }}{% endblock %}
+{% block content %}
+<h1>Delete {{ qso.call }} at {{ qso.time_on|date:"Y-m-d H:i" }}?</h1>
+{% if qso.is_deleted %}
+<p>It's already deleted. <a href="{% url 'logbook:qso' qso.uuid %}">Back to it</a></p>
+{% else %}
+<p>It'll be taken out of your log and exports. It can be brought back from its page afterwards.</p>
+<form method="post">
+  {% csrf_token %}
+  <button type="submit">Delete it</button>
+  <a href="{% url 'logbook:qso' qso.uuid %}">Keep it</a>
+</form>
+{% endif %}
+{% endblock %}

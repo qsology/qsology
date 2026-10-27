@@ -1,0 +1,16 @@
+<div class="table-scroll">
+<table>
+  <caption class="visually-hidden">{{ caption }}</caption>
+  <thead><tr><th scope="col">Callsign</th><th scope="col">From</th><th scope="col">Until</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+  {% for allocation in allocations %}
+  <tr>
+    <th scope="row">{{ allocation.callsign }}{% if allocation.is_primary %} <small>(main)</small>{% endif %}</th>
+    <td>{{ allocation.valid_from|date:"Y-m-d" }}</td>
+    <td>{{ allocation.valid_until|date:"Y-m-d"|default:"Still held" }}</td>
+    <td><a href="{% url 'callsigns:change' allocation.pk %}">Change<span class="visually-hidden"> {{ allocation.callsign }}</span></a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>

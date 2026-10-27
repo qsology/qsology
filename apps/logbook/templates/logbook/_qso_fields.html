@@ -1,0 +1,13 @@
+{% comment %}
+A QSO form's fields, in fieldsets. Shared by the log and a QSO's own page
+{% endcomment %}
+{% for legend, group in form.groups %}
+<fieldset class="qso-group">
+  <legend>{{ legend }}</legend>
+  <div class="qso-fields">
+    {% for field in group %}<div class="f f-{{ field.name }}">{{ field.as_field_group }}</div>{% endfor %}
+  </div>
+</fieldset>
+{% endfor %}
+<datalist id="modes">{% for mode in modes %}<option value="{{ mode }}"></option>{% endfor %}</datalist>
+<datalist id="my-calls">{% for call in my_calls %}<option value="{{ call }}"></option>{% endfor %}</datalist>

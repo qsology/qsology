@@ -1,0 +1,9 @@
+<nav aria-label="Your account" class="subnav">
+  <ul>
+    {% url 'accounts:profile' as profile_url %}{% url 'accounts:password-change' as password_url %}{% url 'accounts:qrz' as qrz_url %}{% url 'accounts:api-keys' as keys_url %}
+    <li><a href="{{ profile_url }}"{% if request.path == profile_url %} aria-current="page"{% endif %}>Profile</a></li>
+    <li><a href="{{ password_url }}"{% if request.path == password_url %} aria-current="page"{% endif %}>Password</a></li>
+    <li><a href="{{ qrz_url }}"{% if request.path == qrz_url %} aria-current="page"{% endif %}>QRZ.com lookups</a></li>
+    <li><a href="{{ keys_url }}"{% if request.path == keys_url %} aria-current="page"{% endif %}>API keys</a></li>
+  </ul>
+</nav>

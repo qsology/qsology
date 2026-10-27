@@ -8,7 +8,7 @@ from django.http import HttpResponse
 from django.test import RequestFactory
 from prometheus_client import REGISTRY
 
-ROUTE = "logbook/exports/<uuid:pk>/download/"
+ROUTE = "exports/<uuid:pk>/download/"
 
 
 def requests(method, route, status):
@@ -29,7 +29,7 @@ def in_progress():
 @pytest.mark.django_db
 class TestThroughDjango:
     def test_counts_by_url_pattern_not_path(self, client):
-        url = f"/logbook/exports/{uuid.uuid4()}/download/"
+        url = f"/exports/{uuid.uuid4()}/download/"
         before = observed("GET", ROUTE)
         status = client.get(url).status_code
         after = requests("GET", ROUTE, status)

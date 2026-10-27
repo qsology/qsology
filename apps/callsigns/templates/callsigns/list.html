@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Your callsigns{% endblock %}
+{% block content %}
+<h1>Your callsigns</h1>
+<p>QSOs you log with these, with any prefix or suffix (such as /P), are counted as yours.</p>
+<h2>Held now</h2>
+{% if current %}
+{% include "callsigns/_table.html" with allocations=current caption="Callsigns held now" %}
+{% else %}
+<p>You haven't added a callsign you hold now.</p>
+{% endif %}
+{% if other %}
+<h2>Held before, or from later</h2>
+{% include "callsigns/_table.html" with allocations=other caption="Callsigns held before or from later" %}
+{% endif %}
+<h2>Add a callsign</h2>
+{% include "includes/form_errors.html" %}
+<form method="post" class="narrow">
+  {% csrf_token %}
+  {{ form.call.as_field_group }}
+  <div class="grid">
+    <div>{{ form.valid_from.as_field_group }}</div>
+    <div>{{ form.valid_until.as_field_group }}</div>
+  </div>
+  {{ form.is_primary.as_field_group }}
+  <button type="submit">Add callsign</button>
+</form>
+{% endblock %}

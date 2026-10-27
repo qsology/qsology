@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Your profile{% endblock %}
+{% block content %}
+<h1>Your profile</h1>
+{% include "accounts/_nav.html" %}
+{% include "includes/form_errors.html" %}
+<form method="post" class="narrow">
+  {% csrf_token %}
+  <p>Username: <strong>{{ user.get_username }}</strong></p>
+  {{ form.display_name.as_field_group }}
+  {{ form.email.as_field_group }}
+  {{ form.theme.as_field_group }}
+  {{ form.ui_mode.as_field_group }}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

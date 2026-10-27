@@ -14,11 +14,21 @@ tasks:
     silent: true
 
   test:
-    desc: "Run the pytest test suite. Can be limited to specific apps and tests. task test -- apps/accounts -k testname"
+    desc: "Run the pytest test suite, including the real browser tests (task test:browsers installs them). Can be limited to specific apps and tests. task test -- apps/accounts -k testname"
     env:
       DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
     cmds:
       - "uv run pytest {{.CLI_ARGS}}"
+  test:quick:
+    desc: "Run the tests without the real browser ones (tests/browser), for while working on something"
+    env:
+      DJANGO_SETTINGS_MODULE: "{{.TEST_SETTINGS}}"
+    cmds:
+      - "uv run pytest -m 'not browser' {{.CLI_ARGS}}"
+  test:browsers:
+    desc: "Install the browsers the browser tests run in (Chromium and Firefox). Their system libraries need root: task test:browsers -- --with-deps"
+    cmds:
+      - "uv run playwright install {{.CLI_ARGS}} chromium firefox"
   test:thorough:
     desc: "Run the tests with many more property based test examples, slow"
     env:

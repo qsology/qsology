@@ -1,0 +1,70 @@
+{% load static %}<!doctype html>
+<html lang="en"{% if theme != "auto" %} data-theme="{{ theme }}"{% endif %} data-htmx="{% static 'vendor/htmx-4.0.0.esm.min.js' %}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="{% if theme == 'auto' %}light dark{% else %}{{ theme }}{% endif %}">
+<meta name="htmx-config" content='{"includeIndicatorCSS": false, "defaultTimeout": 30000}'>
+<title>{% block title %}{% endblock %} · qsology</title>
+<link rel="stylesheet" href="{% static 'vendor/pico-2.1.1.min.css' %}">
+<link rel="stylesheet" href="{% static 'css/qsology.css' %}">
+{# Modules only run in browsers recent enough for them, older ones get the pages as they are #}
+<script type="module" src="{% static 'js/app.js' %}"></script>
+{% block head %}{% endblock %}
+</head>
+<body{% if user.is_authenticated %} data-user="{{ user.pk }}"{% endif %}>
+<a class="skip-link" href="#main">Skip to main content</a>
+<header class="container">
+  <nav aria-label="Main">
+    <ul><li><a href="{% url 'web:home' %}" class="brand"{% if request.resolver_match.view_name == "web:home" %} aria-current="page"{% endif %}>qsology</a></li></ul>
+    {% if user.is_authenticated %}
+    <ul>
+      {% url 'logbook:log' as log_url %}{% url 'logbook:qso-list' as qsos_url %}{% url 'logbook:export-list' as exports_url %}{% url 'logbook:import-list' as imports_url %}{% url 'callsigns:list' as callsigns_url %}{% url 'accounts:profile' as profile_url %}
+      <li><a href="{{ log_url }}"{% if request.path == log_url %} aria-current="page"{% endif %}>Log</a></li>
+      <li><a href="{{ qsos_url }}"{% if request.path == qsos_url %} aria-current="page"{% endif %}>QSOs</a></li>
+      <li><a href="{{ exports_url }}"{% if request.path == exports_url %} aria-current="page"{% endif %}>Export</a></li>
+      <li><a href="{{ imports_url }}"{% if request.path == imports_url %} aria-current="page"{% endif %}>Import</a></li>
+      <li><a href="{{ callsigns_url }}"{% if request.path == callsigns_url %} aria-current="page"{% endif %}>Callsigns</a></li>
+      <li><a href="{{ profile_url }}"{% if request.path == profile_url %} aria-current="page"{% endif %}>Profile</a></li>
+      <li>
+        <form method="post" action="{% url 'accounts:logout' %}" class="inline">
+          {% csrf_token %}<button type="submit" class="link">Sign out</button>
+        </form>
+      </li>
+    </ul>
+    {% else %}
+    <ul><li><a href="{% url 'accounts:login' %}">Sign in</a></li></ul>
+    {% endif %}
+  </nav>
+  {% if advanced %}
+  <form method="post" action="{% url 'web:set-ui-mode' %}" class="mode-switch">
+    {% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <p>You're using the advanced view. <button type="submit" name="ui_mode" value="simple" class="link">Switch back to the simple view</button></p>
+  </form>
+  {% endif %}
+</header>
+<main id="main" class="container" tabindex="-1">
+  {% include "includes/messages.html" %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="container">
+  <form method="post" action="{% url 'web:set-theme' %}" class="theme-switch">
+    {% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <label for="theme-choice">Colours</label>
+    <select name="theme" id="theme-choice">
+      {% for value, label in themes %}<option value="{{ value }}"{% if value == theme %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="secondary">Use these colours</button>
+  </form>
+  {% if user.is_authenticated and not advanced %}
+  <form method="post" action="{% url 'web:set-ui-mode' %}">
+    {% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <button type="submit" name="ui_mode" value="advanced" class="link">Switch to the advanced view</button>
+  </form>
+  {% endif %}
+  <p><small>qsology is free software, <a href="https://github.com/qsology/qsology">get the source</a> (AGPL-3.0).</small></p>
+</footer>
+{# Things the page's scripts say happened, read out by screen readers #}
+<div id="announce" class="visually-hidden" role="status" aria-live="polite"></div>
+</body>
+</html>
